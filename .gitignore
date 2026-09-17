@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.pyo
+desktop/build/
+desktop/dist/
+desktop/highscores.json
+desktop/last_pnl.json
+desktop/*.spec.bak
+.DS_Store
+Thumbs.db
+.env
+.aws-sam/
+.amplify/
+node_modules/
