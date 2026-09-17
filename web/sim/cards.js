@@ -8,6 +8,10 @@ import {
 import { pick } from "./rng.js";
 
 export function isHealthy(state) {
+  if (state.clubs && state.clubs.length) {
+    const live = state.clubs.some((c) => c.onboarded && !c.churned && c.partner && c.hasAudience);
+    return !!(live && (state.intensity > 0));
+  }
   return !!(state.partner && state.hasAudience && (state.intensity > 0));
 }
 

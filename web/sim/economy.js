@@ -39,5 +39,7 @@ export const AWIN_GMV_MULT = 0.7;
 export const COOP_COST = 40;
 export const ADS_ONLY_SPEND = 180;
 export const ADS_ONLY_TRAFFIC = 22;
+export const PORTFOLIO_MIN = 3;
+export const PORTFOLIO_MAX = 5;
 export const SUPPORT_CONV = 2.0;
 export const BAD_REVIEW_CONV = -1.0;

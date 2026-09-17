@@ -8,6 +8,7 @@ import {
   DAYS_PER_MONTH, TOTAL_DAYS, MIN_WORTH_IT, ACCEPTABLE_DECLINE,
   EARLY_CONTRACT_LOSS, CLUB_SHARE, CAPTURE_USP, CAPTURE_AUDIENCE, CAPTURE_COLD,
   PAID_SEARCH_TRAFFIC, TRUST_START, TRUST_HAIRCUT, TRUST_CONV_MULT, PRINT_COST,
+  PARTNER_SHARE, PORTFOLIO_MIN, PORTFOLIO_MAX,
 } from "./economy.js";
 import { pick, rnd } from "./rng.js";
 import { closeMonth, emptyMonthMark, noteIntensity } from "./ledger.js";
@@ -55,6 +56,7 @@ export function createState(opts) {
     pendingChest: null,
     seat: opts.seat || "partner",
     printDigital: opts.printDigital || "digital",
+    clubs: opts.clubs || null,
   };
 }
 
@@ -208,6 +210,7 @@ function chargePromote(state) {
 
 export function stepDay(state, rng) {
   if (state.ended) return { sale: null, ended: true };
+  if (state.clubs && state.clubs.length) return stepPortfolioDay(state, rng);
   state.day += 1;
   noteIntensity(state);
   chargePaidSearch(state);
@@ -260,10 +263,19 @@ export function drawChest(state, rng) {
 }
 
 export function lessonLockOk(state) {
+  if (state.clubs && state.clubs.length) {
+    const live = liveCatalogue(state);
+    return live.length >= 1 && live.every((c) => c.partner && c.hasAudience && c.usp);
+  }
   return !!(state.partner && state.hasAudience && state.usp);
 }
 
 export function highScoreEligible(state) {
+  if (state.clubs && state.clubs.length) {
+    const printOnly = (state.clubs || []).some((c) => c.onboarded && !c.churned && c.printDigital === "print" && !c.partner);
+    if (printOnly) return false;
+    return partnerWon(state);
+  }
   if (!lessonLockOk(state)) return false;
   if (state.printDigital === "print" && !state.partner) return false;
   return true;
@@ -289,6 +301,131 @@ export function tickTrust(state) {
   if (state.contact && !state.usp) t -= 8;
   else if (state.contact && state.usp) t += 4;
   state.trust = Math.max(0, Math.min(100, t));
+}
+
+const CLUB_NAMES = ["Bristol Rugby", "Leeds Cricket", "Exeter FC", "York Hockey", "Bath Tennis"];
+
+export function createClub(opts) {
+  opts = opts || {};
+  const club = createState(Object.assign({}, opts, { seat: "club", clubs: null }));
+  club.id = opts.id || ("c" + Math.floor(Math.random() * 1e9));
+  club.name = opts.name || "Club";
+  club.onboarded = !!opts.onboarded;
+  club.churned = !!opts.churned;
+  club.zeroPromoteStreak = opts.zeroPromoteStreak || 0;
+  club.share = opts.share == null ? 1 : opts.share;
+  return club;
+}
+
+export function defaultClubs(n) {
+  const count = Math.max(PORTFOLIO_MIN, Math.min(PORTFOLIO_MAX, n || PORTFOLIO_MIN));
+  return CLUB_NAMES.slice(0, count).map((name, i) => createClub({ id: "c" + i, name, share: 1 }));
+}
+
+export function onboardClub(club, kind) {
+  club.onboarded = true;
+  if (kind === "print") {
+    applyPrintPack(club);
+    club.partner = false;
+    club.hasAudience = false;
+    club.usp = false;
+    club.contact = false;
+    club.content = false;
+  } else {
+    club.partner = true;
+    club.printDigital = "digital";
+  }
+  return club;
+}
+
+export function liveCatalogue(state) {
+  return (state.clubs || []).filter((c) => c.onboarded && !c.churned && c.partner);
+}
+
+export function tickChurn(club) {
+  if (!club.onboarded || club.churned) return false;
+  if ((club.intensity || 0) < 1) club.zeroPromoteStreak = (club.zeroPromoteStreak || 0) + 1;
+  else club.zeroPromoteStreak = 0;
+  if (club.zeroPromoteStreak >= 2) {
+    club.churned = true;
+    club.partner = false;
+    return true;
+  }
+  return false;
+}
+
+export function partnerProfit(state) {
+  let p = 0;
+  for (const c of liveCatalogue(state)) {
+    p += (c.totalCommission || 0) * PARTNER_SHARE;
+    p += (c.lastMonthCharged || 0) * MONTHLY_COST;
+    if (c.hasAudience) p += c.totalPromote || 0;
+  }
+  return p;
+}
+
+export function partnerWon(state) {
+  const live = liveCatalogue(state);
+  if (live.length < 2) return false;
+  if (live.some((c) => !c.usp)) return false;
+  return partnerProfit(state) > 0;
+}
+
+function rollupPortfolio(state) {
+  const clubs = state.clubs || [];
+  state.totalRevenue = clubs.reduce((a, c) => a + (c.totalRevenue || 0), 0);
+  state.totalCommission = clubs.reduce((a, c) => a + (c.totalCommission || 0), 0);
+  state.totalAdspend = clubs.reduce((a, c) => a + (c.totalAdspend || 0), 0);
+  state.totalPromote = clubs.reduce((a, c) => a + (c.totalPromote || 0), 0);
+  state.totalPaidSearch = clubs.reduce((a, c) => a + (c.totalPaidSearch || 0), 0);
+  state.totalCosts = clubs.reduce((a, c) => a + (c.totalCosts || 0), 0);
+  state.salesCount = clubs.reduce((a, c) => a + (c.salesCount || 0), 0);
+  state.untrackedSpend = clubs.reduce((a, c) => a + (c.untrackedSpend || 0), 0);
+  state.money = partnerProfit(state);
+}
+
+function stepPortfolioDay(state, rng) {
+  state.day += 1;
+  const active = (state.clubs || []).filter((c) => c.onboarded && !c.churned);
+  const shareSum = active.reduce((a, c) => a + (c.share || 0), 0) || 1;
+  let lastSale = null;
+  for (const club of active) {
+    club.products = state.products;
+    club.seo = state.seo;
+    club.paidSearch = state.paidSearch;
+    club.intensity = (state.intensity || 0) * ((club.share || 0) / shareSum);
+    club.day = state.day - 1;
+    club.ended = false;
+    const r = stepDay(club, rng);
+    if (r.sale) lastSale = r.sale;
+    club.ended = false;
+  }
+  rollupPortfolio(state);
+  const m = currentMonth(state);
+  if (m > state.lastMonthCharged && m <= 12) {
+    if (state.lastMonthCharged >= 1) {
+      closeMonth(state, state.lastMonthCharged);
+      for (const c of active) tickChurn(c);
+    }
+    state.lastMonthCharged = m;
+    state.monthlyAdspend = 0;
+  }
+  if (state.money < EARLY_CONTRACT_LOSS) {
+    state.ended = true;
+    state.endReason = "early_loss";
+    return { sale: lastSale, ended: true, endReason: "early_loss" };
+  }
+  if (state.day >= TOTAL_DAYS) {
+    for (const club of active) {
+      if (club.day < TOTAL_DAYS) finalizeYearAccounts(club, rng);
+    }
+    rollupPortfolio(state);
+    closeRemaining(state);
+    state.ended = true;
+    state.endReason = "year_end";
+    return { sale: lastSale, ended: true, endReason: "year_end" };
+  }
+  return { sale: lastSale, ended: false };
 }
 
 export function runYear(state, rng) {

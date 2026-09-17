@@ -18,4 +18,5 @@ export const SCENARIOS = {
     partner: true, hasAudience: true, seo: false, contact: true, content: true,
     paidSearch: false, usp: true, reviews: true, intensity: 40, printDigital: "digital",
   },
+  "portfolio": { _portfolio: true },
 };

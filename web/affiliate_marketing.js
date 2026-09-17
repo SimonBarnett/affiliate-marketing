@@ -120,6 +120,8 @@ const rng = mathRandomRng();
     chest: null,
     seat: "partner",
     printPack: false,
+    clubs: null,
+    pfHits: [],
   };
 
   // Preload welcome hero art (same folder as the JS / index.html)
@@ -144,7 +146,7 @@ const rng = mathRandomRng();
 
   function simSettings() {
     return {
-      partner: S.partner,
+      partner: S.partner || !!(S.clubs && S.clubs.some((c) => c.partner)),
       hasAudience: S.hasAudience,
       seo: S.seo,
       contact: S.contact,
@@ -159,6 +161,7 @@ const rng = mathRandomRng();
       seat: S.seat,
       printDigital: S.printPack ? "print" : "digital",
       trust: S.sim ? S.sim.trust : TRUST_START,
+      clubs: S.clubs,
     };
   }
   function bindSim() {
@@ -170,6 +173,7 @@ const rng = mathRandomRng();
     if (!s) return;
     S.day = s.day;
     S.money = s.money;
+    if (s.clubs) S.clubs = s.clubs;
     S.totalRevenue = s.totalRevenue;
     S.totalCommission = s.totalCommission;
     S.totalAdspend = s.totalAdspend;
@@ -318,6 +322,20 @@ const rng = mathRandomRng();
       else if (c.label === "Product reviews") c.checked = !!sc.reviews;
     });
     if (S.printPack && !S.partner) S.hasAudience = false;
+    if (sc._portfolio) {
+      S.seat = "partner";
+      S.clubs = K.defaultClubs(3);
+      K.onboardClub(S.clubs[0], "catalogue");
+      S.clubs[0].hasAudience = true; S.clubs[0].usp = true; S.clubs[0].contact = true; S.clubs[0].content = true;
+      K.onboardClub(S.clubs[1], "catalogue");
+      S.clubs[1].hasAudience = true; S.clubs[1].usp = true; S.clubs[1].contact = true;
+      K.onboardClub(S.clubs[2], "print");
+    }
+  }
+
+  function ensurePortfolio() {
+    if (S.seat !== "partner") return;
+    if (!S.clubs || S.clubs.length < 3) S.clubs = K.defaultClubs(3);
   }
 
   function seatRects() {
@@ -1015,10 +1033,16 @@ const rng = mathRandomRng();
     drawCheckeredFlag(ctx, { x: box.x + box.w - 74, y: box.y + 10, w: 56, h: 34 }, S.flagT + 0.35, true);
     text(ctx, "YEAR-END P&L", box.x + box.w / 2, box.y + 12, C.WHITE, 20, true, "center");
     const yr = (S.lastPnl && S.lastPnl.years_completed) || S.yearsCompleted || 1;
-    text(ctx, "Year " + yr + (S.seat === "club" ? "  ·  club seat" : ""), box.x + box.w / 2, box.y + 38, C.ORANGE, 13, true, "center");
+    text(ctx, "Year " + yr + (S.seat === "club" ? "  ·  club seat" : (S.seat === "partner" && S.sim && S.sim.clubs ? "  ·  partner portfolio" : "")), box.x + box.w / 2, box.y + 38, C.ORANGE, 13, true, "center");
     if (S.seat === "club" && S.sim) {
       const win = K.clubWon(S.sim);
       text(ctx, win ? "CLUB WIN — commission and trust held" : "Club target missed (need $200 commission and trust 50)",
+        box.x + box.w / 2, box.y + 54, win ? C.GREEN : C.GRAY, 12, true, "center");
+    }
+    if (S.seat === "partner" && S.sim && S.sim.clubs) {
+      const win = K.partnerWon(S.sim);
+      const n = K.liveCatalogue(S.sim).length;
+      text(ctx, win ? "PARTNER WIN — profit and ≥2 live USP clubs" : ("Partner target: profit + 2 USP clubs (live " + n + ")"),
         box.x + box.w / 2, box.y + 54, win ? C.GREEN : C.GRAY, 12, true, "center");
     }
 
@@ -1200,6 +1224,50 @@ const rng = mathRandomRng();
     }
   }
 
+  function drawPortfolio(ctx, canEdit) {
+    S.pfHits = [];
+    const x = TRAFFIC_COL.x + 8, w = TRAFFIC_COL.w - 16;
+    let y = STRATEGY_START_Y - 20;
+    text(ctx, "PORTFOLIO  3–5 clubs", x + w / 2, y - 18, C.BLUE, 13, true, "center");
+    (S.clubs || []).forEach((c, i) => {
+      const h = 52;
+      fillRound(ctx, [24, 26, 38], x, y, w, h, 8);
+      const status = c.churned ? "CHURNED" : (!c.onboarded ? "—" : (c.partner ? "LIVE" : "PRINT"));
+      const col = c.churned ? C.RED : (c.partner ? C.GREEN : (c.onboarded ? C.ORANGE : C.GRAY));
+      text(ctx, c.name, x + 8, y + 4, C.WHITE, 12, true);
+      text(ctx, status, x + w - 8, y + 4, col, 11, true, "right");
+      if (canEdit && !c.onboarded) {
+        const a = { x: x + 8, y: y + 24, w: 88, h: 22 }, b = { x: x + 102, y: y + 24, w: 88, h: 22 };
+        fillRound(ctx, C.GREEN, a.x, a.y, a.w, a.h, 6);
+        text(ctx, "Catalogue", a.x + 44, a.y + 4, C.BLACK, 11, true, "center");
+        fillRound(ctx, C.ORANGE, b.x, b.y, b.w, b.h, 6);
+        text(ctx, "Print pack", b.x + 44, b.y + 4, C.BLACK, 11, true, "center");
+        S.pfHits.push({ rect: a, act: "cat", i });
+        S.pfHits.push({ rect: b, act: "print", i });
+      } else {
+        const uspR = { x: x + 8, y: y + 24, w: 70, h: 22 };
+        drawCheckbox(ctx, uspR.x, uspR.y, !!c.usp, "USP", canEdit && c.partner && !c.churned);
+        S.pfHits.push({ rect: { x: uspR.x, y: uspR.y, w: 120, h: 22 }, act: "usp", i });
+        const minus = { x: x + w - 78, y: y + 24, w: 22, h: 22 };
+        const plus = { x: x + w - 30, y: y + 24, w: 22, h: 22 };
+        fillRound(ctx, C.DARK, minus.x, minus.y, minus.w, minus.h, 4);
+        fillRound(ctx, C.DARK, plus.x, plus.y, plus.w, plus.h, 4);
+        text(ctx, "−", minus.x + 11, minus.y + 3, C.WHITE, 14, true, "center");
+        text(ctx, "+", plus.x + 11, plus.y + 3, C.WHITE, 14, true, "center");
+        text(ctx, String(c.share || 1), x + w - 54, y + 26, C.GRAY, 11, false, "center");
+        S.pfHits.push({ rect: minus, act: "share-", i });
+        S.pfHits.push({ rect: plus, act: "share+", i });
+      }
+      y += h + 6;
+    });
+    if (canEdit && S.clubs && S.clubs.length < 5) {
+      const add = { x: x, y: y, w: w, h: 24 };
+      strokeRound(ctx, C.BLUE, add.x, add.y, add.w, add.h, 6, 1);
+      text(ctx, "+ club", add.x + add.w / 2, add.y + 4, C.BLUE, 12, true, "center");
+      S.pfHits.push({ rect: add, act: "add" });
+    }
+  }
+
   function drawMain(ctx) {
     ctx.fillStyle = rgb(C.BG); ctx.fillRect(0, 0, W, H);
     const tint = monitorTint();
@@ -1218,19 +1286,26 @@ const rng = mathRandomRng();
 
     const canEdit = S.state === "setup";
     const club = S.seat === "club";
-    drawCheckbox(ctx, 710, PARTNER_Y, S.partner, club ? "Accept partner" : "Partner Promotion", canEdit);
-    drawCheckbox(ctx, 710, AUDIENCE_Y, S.hasAudience, "Has an Audience", canEdit && S.partner);
-    if (!club) drawCheckbox(ctx, 710, SEO_Y, S.seo, "SEO optimized content", canEdit && S.partner);
-    drawCheckbox(ctx, 710, CONTACT_Y, S.contact, club ? "Send templates" : "Regular Contact", canEdit && S.partner && S.hasAudience);
-    drawCheckbox(ctx, 710, CONTENT_Y, S.content, club ? "Publish content" : "Regular content updates", canEdit && S.hasAudience);
-    if (club) {
-      drawCheckbox(ctx, 710, SEO_Y, S.printPack, "Print pack ($" + PRINT_COST + " untracked)", canEdit);
+    const folio = S.seat === "partner" && S.clubs && S.clubs.length;
+    if (!folio) {
+      drawCheckbox(ctx, 710, PARTNER_Y, S.partner, club ? "Accept partner" : "Partner Promotion", canEdit);
+      drawCheckbox(ctx, 710, AUDIENCE_Y, S.hasAudience, "Has an Audience", canEdit && S.partner);
+      if (!club) drawCheckbox(ctx, 710, SEO_Y, S.seo, "SEO optimized content", canEdit && S.partner);
+      drawCheckbox(ctx, 710, CONTACT_Y, S.contact, club ? "Send templates" : "Regular Contact", canEdit && S.partner && S.hasAudience);
+      drawCheckbox(ctx, 710, CONTENT_Y, S.content, club ? "Publish content" : "Regular content updates", canEdit && S.hasAudience);
+      if (club) {
+        drawCheckbox(ctx, 710, SEO_Y, S.printPack, "Print pack ($" + PRINT_COST + " untracked)", canEdit);
+      }
+    } else {
+      drawPortfolio(ctx, canEdit);
+      if (!club) drawCheckbox(ctx, 990, CONV_START_Y + 3 * CHECK_H, S.seo, "SEO (all clubs)", canEdit);
     }
 
     S.conversion.forEach((c, i) => {
+      if (folio && c.mult) return;
       const cy = CONV_START_Y + i * CHECK_H;
       let enabled = canEdit;
-      if (c.label === "Product reviews") enabled = canEdit && S.partner;
+      if (c.label === "Product reviews") enabled = canEdit && (folio || S.partner);
       else if (c.mult) enabled = canEdit && S.hasAudience;
       drawCheckbox(ctx, 990, cy, c.checked, c.label, enabled);
     });
@@ -1241,9 +1316,10 @@ const rng = mathRandomRng();
     drawFlag(ctx, S.flagT);
 
     if (S.state === "setup") {
-      fillRound(ctx, C.GREEN, START.x, START.y, START.w, START.h, 12);
+      const ready = !folio || S.clubs.every((c) => c.onboarded);
+      fillRound(ctx, ready ? C.GREEN : C.DARK, START.x, START.y, START.w, START.h, 12);
       strokeRound(ctx, C.WHITE, START.x, START.y, START.w, START.h, 12, 3);
-      text(ctx, "START YEAR", START.x + START.w / 2, START.y + 14, C.BLACK, 18, true, "center");
+      text(ctx, ready ? "START YEAR" : "ONBOARD ALL CLUBS", START.x + START.w / 2, START.y + 14, ready ? C.BLACK : C.GRAY, 16, true, "center");
     }
 
     // HUD when running (+ per-metric hover tips)
@@ -1501,6 +1577,7 @@ const rng = mathRandomRng();
         if (hit(r, lx, ly)) {
           S.seat = r.id;
           resetStrategies(); resetGame(false);
+          if (S.seat === "partner") ensurePortfolio();
           S.state = "setup"; S.welcomeT = 0;
           return;
         }
@@ -1556,31 +1633,56 @@ const rng = mathRandomRng();
     }
 
     if (S.state === "setup") {
-      if (hit({ x: 710, y: PARTNER_Y, w: 250, h: 28 }, lx, ly)) {
-        S.partner = !S.partner;
-        if (S.partner) S.clubUrl = pickClubUrl();
-        else {
-          S.clubUrl = null; S.hasAudience = false; S.contact = false; S.seo = false; S.content = false; S.intensity = 0;
-          S.conversion.forEach((c) => { if (c.label === "Product reviews" || c.mult) c.checked = false; });
+      const folio = S.seat === "partner" && S.clubs && S.clubs.length;
+      if (folio) {
+        for (const h of S.pfHits || []) {
+          if (!hit(h.rect, lx, ly)) continue;
+          const c = h.i != null ? S.clubs[h.i] : null;
+          if (h.act === "cat" && c) {
+            K.onboardClub(c, "catalogue");
+            c.hasAudience = true; c.contact = true; c.content = true;
+          }
+          if (h.act === "print" && c) K.onboardClub(c, "print");
+          if (h.act === "usp" && c && c.partner && !c.churned) c.usp = !c.usp;
+          if (h.act === "share+" && c) c.share = Math.min(5, (c.share || 1) + 1);
+          if (h.act === "share-" && c) c.share = Math.max(0, (c.share || 1) - 1);
+          if (h.act === "add" && S.clubs.length < 5) {
+            S.clubs.push(K.createClub({ id: "c" + Date.now(), name: "New Club " + (S.clubs.length + 1), share: 1 }));
+          }
         }
+        if (hit({ x: 990, y: CONV_START_Y + 3 * CHECK_H, w: 250, h: 28 }, lx, ly)) S.seo = !S.seo;
+      } else {
+        if (hit({ x: 710, y: PARTNER_Y, w: 250, h: 28 }, lx, ly)) {
+          S.partner = !S.partner;
+          if (S.partner) S.clubUrl = pickClubUrl();
+          else {
+            S.clubUrl = null; S.hasAudience = false; S.contact = false; S.seo = false; S.content = false; S.intensity = 0;
+            S.conversion.forEach((c) => { if (c.label === "Product reviews" || c.mult) c.checked = false; });
+          }
+        }
+        if (hit({ x: 710, y: AUDIENCE_Y, w: 250, h: 28 }, lx, ly) && S.partner) {
+          S.hasAudience = !S.hasAudience;
+          if (!S.hasAudience) { S.contact = false; S.content = false; S.intensity = 0; S.conversion.filter((c) => c.mult).forEach((c) => { c.checked = false; }); }
+        }
+        if (hit({ x: 710, y: SEO_Y, w: 250, h: 28 }, lx, ly)) {
+          if (S.seat === "club") S.printPack = !S.printPack;
+          else if (S.partner) S.seo = !S.seo;
+        }
+        if (hit({ x: 710, y: CONTENT_Y, w: 250, h: 28 }, lx, ly) && S.hasAudience) S.content = !S.content;
+        if (hit({ x: 710, y: CONTACT_Y, w: 250, h: 28 }, lx, ly) && S.partner && S.hasAudience) S.contact = !S.contact;
       }
-      if (hit({ x: 710, y: AUDIENCE_Y, w: 250, h: 28 }, lx, ly) && S.partner) {
-        S.hasAudience = !S.hasAudience;
-        if (!S.hasAudience) { S.contact = false; S.content = false; S.intensity = 0; S.conversion.filter((c) => c.mult).forEach((c) => { c.checked = false; }); }
-      }
-      if (hit({ x: 710, y: SEO_Y, w: 250, h: 28 }, lx, ly)) {
-        if (S.seat === "club") S.printPack = !S.printPack;
-        else if (S.partner) S.seo = !S.seo;
-      }
-      if (hit({ x: 710, y: CONTENT_Y, w: 250, h: 28 }, lx, ly) && S.hasAudience) S.content = !S.content;
-      if (hit({ x: 710, y: CONTACT_Y, w: 250, h: 28 }, lx, ly) && S.partner && S.hasAudience) S.contact = !S.contact;
       S.conversion.forEach((c, i) => {
+        if (folio && c.mult) return;
         if (!hit({ x: 990, y: CONV_START_Y + i * CHECK_H, w: 250, h: 28 }, lx, ly)) return;
-        if (c.label === "Product reviews" && !S.partner) return;
+        if (c.label === "Product reviews" && !S.partner && !folio) return;
         if (c.mult && !S.hasAudience) return;
         c.checked = !c.checked;
+        if (folio && c.label === "Product reviews") {
+          S.clubs.forEach((cl) => { if (cl.partner) cl.reviews = c.checked; });
+        }
       });
       if (hit(START, lx, ly)) {
+        if (folio && S.clubs.some((c) => !c.onboarded)) return;
         bindSim();
         if (S.printPack) K.applyPrintPack(S.sim);
         pullSim();
@@ -1714,6 +1816,7 @@ const rng = mathRandomRng();
       const scenario = q.get("scenario");
       if (seat === "club" || seat === "partner") S.seat = seat;
       if (scenario) applyScenario(scenario);
+      if (S.seat === "partner") ensurePortfolio();
       if (seat || scenario) { S.state = "setup"; S.welcomeT = 0; }
     } catch (e) {}
 
