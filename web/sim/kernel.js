@@ -7,7 +7,7 @@ import {
   CPC_BASE, AUDIENCE_CPC, VISITORS_PER_INTENSITY,
   DAYS_PER_MONTH, TOTAL_DAYS, MIN_WORTH_IT, ACCEPTABLE_DECLINE,
   EARLY_CONTRACT_LOSS, CLUB_SHARE, CAPTURE_USP, CAPTURE_AUDIENCE, CAPTURE_COLD,
-  PAID_SEARCH_TRAFFIC, TRUST_START, TRUST_HAIRCUT, TRUST_CONV_MULT,
+  PAID_SEARCH_TRAFFIC, TRUST_START, TRUST_HAIRCUT, TRUST_CONV_MULT, PRINT_COST,
 } from "./economy.js";
 import { pick, rnd } from "./rng.js";
 import { closeMonth, emptyMonthMark, noteIntensity } from "./ledger.js";
@@ -41,7 +41,7 @@ export function createState(opts) {
     lastMonthCharged: 0,
     monthlyAdspend: 0,
     untrackedPrintDelta: 0,
-    untrackedSpend: 0,
+    untrackedSpend: opts.untrackedSpend || 0,
     ledger: [],
     monthMark: emptyMonthMark(),
     ended: false,
@@ -218,6 +218,7 @@ export function stepDay(state, rng) {
     if (state.lastMonthCharged >= 1) {
       closeMonth(state, state.lastMonthCharged);
       tickModifiers(state);
+      tickTrust(state);
     }
     if (state.partner) {
       state.money -= MONTHLY_COST;
@@ -260,6 +261,34 @@ export function drawChest(state, rng) {
 
 export function lessonLockOk(state) {
   return !!(state.partner && state.hasAudience && state.usp);
+}
+
+export function highScoreEligible(state) {
+  if (!lessonLockOk(state)) return false;
+  if (state.printDigital === "print" && !state.partner) return false;
+  return true;
+}
+
+export function clubWon(state) {
+  const clubCommission = (state.totalCommission || 0) * CLUB_SHARE;
+  const trust = state.trust == null ? TRUST_START : state.trust;
+  return clubCommission >= 200 && trust >= 50;
+}
+
+export function applyPrintPack(state) {
+  state.printDigital = "print";
+  state.money -= PRINT_COST;
+  state.untrackedSpend = (state.untrackedSpend || 0) + PRINT_COST;
+  state.untrackedPrintDelta = (state.untrackedPrintDelta || 0) + PRINT_COST;
+  state.totalCosts += PRINT_COST;
+  return PRINT_COST;
+}
+
+export function tickTrust(state) {
+  let t = state.trust == null ? TRUST_START : state.trust;
+  if (state.contact && !state.usp) t -= 8;
+  else if (state.contact && state.usp) t += 4;
+  state.trust = Math.max(0, Math.min(100, t));
 }
 
 export function runYear(state, rng) {

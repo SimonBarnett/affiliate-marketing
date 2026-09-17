@@ -11,11 +11,12 @@ import {
   SEO_TRAFFIC_POINTS, SEO_TRAFFIC_CLUB, SEO_CLUB_CONV_HAIRCUT,
   CPC_BASE, AUDIENCE_CPC, VISITORS_PER_INTENSITY,
   DAYS_PER_MONTH, TOTAL_DAYS, MONTH_NAMES, MIN_WORTH_IT, ACCEPTABLE_DECLINE,
-  EARLY_CONTRACT_LOSS, LOSS_PROMOTE_LIMIT,
+  EARLY_CONTRACT_LOSS, LOSS_PROMOTE_LIMIT, PRINT_COST, TRUST_START,
 } from "./sim/economy.js";
 import { mathRandomRng } from "./sim/rng.js";
 import * as K from "./sim/kernel.js";
 import { debriefSentences, ledgerTotals, LS_LEDGER } from "./sim/ledger.js";
+import { SCENARIOS } from "./sim/scenarios.js";
 
 const W = 1280, H = 820;
 const rng = mathRandomRng();
@@ -72,7 +73,7 @@ const rng = mathRandomRng();
   const CONV_START_Y = STRATEGY_START_Y;
   const TRAFFIC_KNOB = { x: 825, y: 130 }, CONV_KNOB = { x: 1105, y: 130 }, KNOB_R = 55;
 
-  function hudRect() { return { x: CONV_COL.x + 8, y: 400, w: CONV_COL.w - 16, h: 155 }; }
+  function hudRect() { return { x: CONV_COL.x + 8, y: 390, w: CONV_COL.w - 16, h: 175 }; }
   function quitRect() { const h = hudRect(); return { x: h.x + 10, y: h.y + h.h - 30, w: h.w - 20, h: 24 }; }
 
   // ---- Help text ----
@@ -117,6 +118,8 @@ const rng = mathRandomRng();
     sim: null,
     debrief: null,
     chest: null,
+    seat: "partner",
+    printPack: false,
   };
 
   // Preload welcome hero art (same folder as the JS / index.html)
@@ -153,6 +156,9 @@ const rng = mathRandomRng();
       products: S.products,
       yearsCompleted: S.yearsCompleted,
       lastYearNet: S.lastYearNet,
+      seat: S.seat,
+      printDigital: S.printPack ? "print" : "digital",
+      trust: S.sim ? S.sim.trust : TRUST_START,
     };
   }
   function bindSim() {
@@ -297,6 +303,35 @@ const rng = mathRandomRng();
     if (!S.partner) { S.hasAudience = false; S.contact = false; S.seo = false; }
   }
 
+  function applyScenario(name) {
+    const sc = SCENARIOS[name];
+    if (!sc) return;
+    S.partner = !!sc.partner;
+    S.hasAudience = !!sc.hasAudience;
+    S.seo = !!sc.seo;
+    S.contact = !!sc.contact;
+    S.content = !!sc.content;
+    S.printPack = sc.printDigital === "print";
+    S.conversion.forEach((c) => {
+      if (c.mult) c.checked = !!sc.usp;
+      else if (c.label === "Paid search") c.checked = !!sc.paidSearch;
+      else if (c.label === "Product reviews") c.checked = !!sc.reviews;
+    });
+    if (S.printPack && !S.partner) S.hasAudience = false;
+  }
+
+  function seatRects() {
+    const w = 210, h = 58, gap = 18;
+    const total = 3 * w + 2 * gap;
+    const x0 = (W - total) / 2;
+    const y = H - 108;
+    return [
+      { id: "partner", label: "PARTNER", sub: "Agency year", x: x0, y, w, h },
+      { id: "club", label: "CLUB", sub: "Accept · USP · print trap", x: x0 + w + gap, y, w, h },
+      { id: "platform", label: "PLATFORM", sub: "WP5 — not this build", x: x0 + 2 * (w + gap), y, w, h, disabled: true },
+    ];
+  }
+
   // ---- Formulas (match Python) ----
   function paidSearchOn() { return S.conversion.some((c) => c.label === "Paid search" && c.checked); }
   function clubCommissionOn() { return S.conversion.some((c) => c.mult && c.checked); }
@@ -405,6 +440,7 @@ const rng = mathRandomRng();
   function recordHighScore() {
     if (S.scoresRecorded) return;
     S.scoresRecorded = true;
+    if (S.sim && !K.highScoreEligible(S.sim)) return;
     const entry = {
       net: communityShareNow(), sales: S.salesCount, revenue: S.totalRevenue,
       settings: snapshotSettings(), is_current: true,
@@ -901,7 +937,15 @@ const rng = mathRandomRng();
       ctx.fillStyle = i === si ? rgb(C.BLUE) : "rgb(50, 58, 72)";
       ctx.fill();
     }
-    text(ctx, "Clubs  ·  SEO  ·  Promote  ·  Commission", W / 2, cy + 262, [140, 180, 220], 11, false, "center");
+    text(ctx, "Pick a seat  ·  Partner, Club, or wait for Platform", W / 2, cy + 262, [140, 180, 220], 11, false, "center");
+
+    seatRects().forEach((r) => {
+      const col = r.disabled ? C.DARK : (r.id === "club" ? C.ORANGE : C.BLUE);
+      fillRound(ctx, r.disabled ? [40, 42, 52] : [28, 32, 48], r.x, r.y, r.w, r.h, 10);
+      strokeRound(ctx, col, r.x, r.y, r.w, r.h, 10, 2);
+      text(ctx, r.label, r.x + r.w / 2, r.y + 8, r.disabled ? C.GRAY : C.WHITE, 16, true, "center");
+      text(ctx, r.sub, r.x + r.w / 2, r.y + 32, C.GRAY, 11, false, "center");
+    });
 
     // Money rising from title
     for (let i = 0; i < 24; i++) {
@@ -971,7 +1015,12 @@ const rng = mathRandomRng();
     drawCheckeredFlag(ctx, { x: box.x + box.w - 74, y: box.y + 10, w: 56, h: 34 }, S.flagT + 0.35, true);
     text(ctx, "YEAR-END P&L", box.x + box.w / 2, box.y + 12, C.WHITE, 20, true, "center");
     const yr = (S.lastPnl && S.lastPnl.years_completed) || S.yearsCompleted || 1;
-    text(ctx, "Year " + yr, box.x + box.w / 2, box.y + 38, C.ORANGE, 13, true, "center");
+    text(ctx, "Year " + yr + (S.seat === "club" ? "  ·  club seat" : ""), box.x + box.w / 2, box.y + 38, C.ORANGE, 13, true, "center");
+    if (S.seat === "club" && S.sim) {
+      const win = K.clubWon(S.sim);
+      text(ctx, win ? "CLUB WIN — commission and trust held" : "Club target missed (need $200 commission and trust 50)",
+        box.x + box.w / 2, box.y + 54, win ? C.GREEN : C.GRAY, 12, true, "center");
+    }
 
     const sales = S.salesCount, rev = S.totalRevenue, comm = S.totalCommission;
     const fee = Math.max(0, S.totalCosts - S.totalAdspend);
@@ -984,7 +1033,7 @@ const rng = mathRandomRng();
     const partnerGets = S.partner ? part + fee + adToPartner : 0;
     const communityGets = community - S.totalAdspend - (S.partner ? fee : 0);
 
-    let y = box.y + 62;
+    let y = box.y + (S.seat === "club" ? 74 : 62);
     S.pnlHoverRects = [];
     const indents = { 0: 12, 1: 24, 2: 36, 3: 52 };
     const rows = [
@@ -1168,11 +1217,15 @@ const rng = mathRandomRng();
     text(ctx, "Conversion Strategy", CONV_COL.x + CONV_COL.w / 2, STRATEGY_START_Y - 28, C.ORANGE, 13, true, "center");
 
     const canEdit = S.state === "setup";
-    drawCheckbox(ctx, 710, PARTNER_Y, S.partner, "Partner Promotion", canEdit);
+    const club = S.seat === "club";
+    drawCheckbox(ctx, 710, PARTNER_Y, S.partner, club ? "Accept partner" : "Partner Promotion", canEdit);
     drawCheckbox(ctx, 710, AUDIENCE_Y, S.hasAudience, "Has an Audience", canEdit && S.partner);
-    drawCheckbox(ctx, 710, SEO_Y, S.seo, "SEO optimized content", canEdit && S.partner);
-    drawCheckbox(ctx, 710, CONTACT_Y, S.contact, "Regular Contact", canEdit && S.partner && S.hasAudience);
-    drawCheckbox(ctx, 710, CONTENT_Y, S.content, "Regular content updates", canEdit && S.hasAudience);
+    if (!club) drawCheckbox(ctx, 710, SEO_Y, S.seo, "SEO optimized content", canEdit && S.partner);
+    drawCheckbox(ctx, 710, CONTACT_Y, S.contact, club ? "Send templates" : "Regular Contact", canEdit && S.partner && S.hasAudience);
+    drawCheckbox(ctx, 710, CONTENT_Y, S.content, club ? "Publish content" : "Regular content updates", canEdit && S.hasAudience);
+    if (club) {
+      drawCheckbox(ctx, 710, SEO_Y, S.printPack, "Print pack ($" + PRINT_COST + " untracked)", canEdit);
+    }
 
     S.conversion.forEach((c, i) => {
       const cy = CONV_START_Y + i * CHECK_H;
@@ -1214,6 +1267,13 @@ const rng = mathRandomRng();
 
       const disp = S.hudDisplayMoney;
       text(ctx, fmtMoney(disp), hx + hw - 10, hy + 4, disp >= 0 ? C.GREEN : C.RED, 16, true, "right");
+      const trust = S.sim && S.sim.trust != null ? S.sim.trust : TRUST_START;
+      const tbar = { x: hx + 10, y: hy + hh - 48, w: hw - 20, h: 8 };
+      ctx.fillStyle = "rgb(40,44,58)";
+      ctx.fillRect(tbar.x, tbar.y, tbar.w, tbar.h);
+      ctx.fillStyle = trust < 30 ? rgb(C.RED) : (trust < 50 ? rgb(C.ORANGE) : rgb(C.GREEN));
+      ctx.fillRect(tbar.x, tbar.y, tbar.w * Math.max(0, Math.min(1, trust / 100)), tbar.h);
+      text(ctx, "Trust " + Math.round(trust), tbar.x, tbar.y - 14, C.GRAY, 11);
       addHover(hx + hw - 110, hy + 2, 100, 20,
         "Community balance: running community share of commission minus all community costs. "
         + "Calculation: Σ(sale commission × 25%) − promote − paid search − $20/mo engagement. "
@@ -1396,7 +1456,11 @@ const rng = mathRandomRng();
     if (S.state === "setup" || S.state === "running") {
       if (hit({ x: 710, y: PARTNER_Y, w: 250, h: 28 }, x, y)) S.hoverHelp = TRAFFIC_HELP.partner;
       else if (hit({ x: 710, y: AUDIENCE_Y, w: 250, h: 28 }, x, y)) S.hoverHelp = lockTraffic("audience") || TRAFFIC_HELP.audience;
-      else if (hit({ x: 710, y: SEO_Y, w: 250, h: 28 }, x, y)) S.hoverHelp = lockTraffic("seo") || TRAFFIC_HELP.seo;
+      else if (hit({ x: 710, y: SEO_Y, w: 250, h: 28 }, x, y)) {
+        S.hoverHelp = S.seat === "club"
+          ? ("Print pack: $" + PRINT_COST + " catalogue drop. Untracked unless a QR + partner + Promote is live that month. Does not create sales on its own.")
+          : (lockTraffic("seo") || TRAFFIC_HELP.seo);
+      }
       else if (hit({ x: 710, y: CONTACT_Y, w: 250, h: 28 }, x, y)) S.hoverHelp = lockTraffic("contact") || TRAFFIC_HELP.contact;
       else if (hit({ x: 710, y: CONTENT_Y, w: 250, h: 28 }, x, y)) S.hoverHelp = lockTraffic("content") || TRAFFIC_HELP.content;
       else if (hit(PROMOTE, x, y)) {
@@ -1431,8 +1495,16 @@ const rng = mathRandomRng();
     if (S.chest) { S.chest = null; return; }
 
     if (S.state === "welcome") {
-      resetStrategies(); resetGame(false);
-      S.state = "setup"; S.welcomeT = 0;
+      const seats = seatRects();
+      for (const r of seats) {
+        if (r.disabled) continue;
+        if (hit(r, lx, ly)) {
+          S.seat = r.id;
+          resetStrategies(); resetGame(false);
+          S.state = "setup"; S.welcomeT = 0;
+          return;
+        }
+      }
       return;
     }
     if (S.state === "outro") return;
@@ -1496,7 +1568,10 @@ const rng = mathRandomRng();
         S.hasAudience = !S.hasAudience;
         if (!S.hasAudience) { S.contact = false; S.content = false; S.intensity = 0; S.conversion.filter((c) => c.mult).forEach((c) => { c.checked = false; }); }
       }
-      if (hit({ x: 710, y: SEO_Y, w: 250, h: 28 }, lx, ly) && S.partner) S.seo = !S.seo;
+      if (hit({ x: 710, y: SEO_Y, w: 250, h: 28 }, lx, ly)) {
+        if (S.seat === "club") S.printPack = !S.printPack;
+        else if (S.partner) S.seo = !S.seo;
+      }
       if (hit({ x: 710, y: CONTENT_Y, w: 250, h: 28 }, lx, ly) && S.hasAudience) S.content = !S.content;
       if (hit({ x: 710, y: CONTACT_Y, w: 250, h: 28 }, lx, ly) && S.partner && S.hasAudience) S.contact = !S.contact;
       S.conversion.forEach((c, i) => {
@@ -1507,6 +1582,8 @@ const rng = mathRandomRng();
       });
       if (hit(START, lx, ly)) {
         bindSim();
+        if (S.printPack) K.applyPrintPack(S.sim);
+        pullSim();
         S.state = "running"; S.day = 0; S.hudAnimT = 0; S.hudDisplayMoney = 0;
       }
       return;
@@ -1631,6 +1708,14 @@ const rng = mathRandomRng();
 
     loadHS(); loadLastPnl();
     randomiseProducts();
+    try {
+      const q = new URLSearchParams(window.location.search || "");
+      const seat = q.get("seat");
+      const scenario = q.get("scenario");
+      if (seat === "club" || seat === "partner") S.seat = seat;
+      if (scenario) applyScenario(scenario);
+      if (seat || scenario) { S.state = "setup"; S.welcomeT = 0; }
+    } catch (e) {}
 
     /**
      * Fit canvas inside container with uniform scale (never stretch).
