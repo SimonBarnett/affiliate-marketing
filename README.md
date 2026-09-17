@@ -9,7 +9,9 @@ This repo holds both implementations:
 | `web/` | Canvas port. Hosted on AWS Amplify at **https://sim.ntsa.uk** |
 | `desktop/` | Original pygame app (Windows `.exe` via PyInstaller) |
 
-The live partner site still embeds the same JS at [partner.clubmadeira.io/sim.html](https://partner.clubmadeira.io/sim.html) from the S3 widget bucket. This repo is the source of truth going forward.
+**Ship only to https://sim.ntsa.uk.** Do not change [partner.clubmadeira.io/sim.html](https://partner.clubmadeira.io/sim.html) or the S3 widget until an explicit cutover.
+
+Agent handoff (AWS account, Amplify app id, DNS, CloudShell creds): [docs/handoff-aws.md](docs/handoff-aws.md). Economy dump: [docs/economy-from-source.md](docs/economy-from-source.md).
 
 ## Web
 
