@@ -7,10 +7,11 @@ import {
   CPC_BASE, AUDIENCE_CPC, VISITORS_PER_INTENSITY,
   DAYS_PER_MONTH, TOTAL_DAYS, MIN_WORTH_IT, ACCEPTABLE_DECLINE,
   EARLY_CONTRACT_LOSS, CLUB_SHARE, CAPTURE_USP, CAPTURE_AUDIENCE, CAPTURE_COLD,
-  PAID_SEARCH_TRAFFIC,
+  PAID_SEARCH_TRAFFIC, TRUST_START, TRUST_HAIRCUT, TRUST_CONV_MULT,
 } from "./economy.js";
 import { pick, rnd } from "./rng.js";
 import { closeMonth, emptyMonthMark, noteIntensity } from "./ledger.js";
+import { tickModifiers, modsOf, drawChest as drawChestCard, shouldDrawChest as shouldDrawChestCard } from "./cards.js";
 
 export { TOTAL_DAYS, DAYS_PER_MONTH };
 
@@ -47,6 +48,13 @@ export function createState(opts) {
     endReason: null,
     yearsCompleted: opts.yearsCompleted || 0,
     lastYearNet: opts.lastYearNet == null ? null : opts.lastYearNet,
+    modifiers: [],
+    trust: opts.trust == null ? TRUST_START : opts.trust,
+    churnRisk: 0,
+    chestDrawnMonth: 0,
+    pendingChest: null,
+    seat: opts.seat || "partner",
+    printDigital: opts.printDigital || "digital",
   };
 }
 
@@ -70,10 +78,16 @@ export function getConversion(state) {
   let base = 1.0, other = 0, clubBonus = 0, clubOn = !!state.usp;
   if (state.paidSearch) other += 1.5;
   if (state.reviews) other += 2.0;
-  if (state.contact && state.hasAudience) other += CONTACT_ENGAGEMENT_BONUS;
+  let contactBonus = CONTACT_ENGAGEMENT_BONUS;
+  for (const m of modsOf(state)) {
+    if (m.contactMult) contactBonus *= m.contactMult;
+    if (m.convDelta) other += m.convDelta;
+  }
+  if (state.contact && state.hasAudience) other += contactBonus;
   if (clubOn) clubBonus = 1.0;
   let conv = clubOn ? base + clubBonus + other * 2.0 : base + other;
   if (state.seo && state.hasAudience) conv = Math.max(0.5, conv - SEO_CLUB_CONV_HAIRCUT);
+  if ((state.trust == null ? TRUST_START : state.trust) < TRUST_HAIRCUT) conv *= TRUST_CONV_MULT;
   return conv;
 }
 
@@ -102,6 +116,10 @@ export function getTrafficPotential(state) {
 export function getTraffic(state) {
   let base = getTrafficPotential(state);
   if (state.hasAudience && !state.partner) base = Math.max(0, base - 12.5);
+  for (const m of modsOf(state)) {
+    if (m.trafficMult) base *= m.trafficMult;
+    if (m.trafficAdd) base += m.trafficAdd;
+  }
   return Math.max(0, Math.min(100, base));
 }
 
@@ -123,6 +141,9 @@ export function promoteCpc(state) {
   let cpc = state.hasAudience ? AUDIENCE_CPC : CPC_BASE;
   if (state.partner) cpc *= 0.65;
   if (state.seo || paidSearchOn(state)) cpc *= 2;
+  for (const m of modsOf(state)) {
+    if (m.promoteCpcMult) cpc *= m.promoteCpcMult;
+  }
   return cpc;
 }
 
@@ -140,8 +161,13 @@ export function tryAutoSale(state, rng) {
   if (rng.next() >= p) return null;
   const prod = pick(state.products, rng);
   const rate = prod.commission_rate;
-  const commission = prod.price * rate * getCommissionCapture(state);
-  state.totalRevenue += prod.price;
+  let gmvMult = 1;
+  for (const m of modsOf(state)) {
+    if (m.gmvMult) gmvMult *= m.gmvMult;
+  }
+  const price = prod.price * gmvMult;
+  const commission = price * rate * getCommissionCapture(state);
+  state.totalRevenue += price;
   state.totalCommission += commission;
   const clubEarn = commission * CLUB_SHARE;
   state.money += clubEarn;
@@ -189,7 +215,10 @@ export function stepDay(state, rng) {
   const sale = tryAutoSale(state, rng);
   const m = currentMonth(state);
   if (m > state.lastMonthCharged && m <= 12) {
-    if (state.lastMonthCharged >= 1) closeMonth(state, state.lastMonthCharged);
+    if (state.lastMonthCharged >= 1) {
+      closeMonth(state, state.lastMonthCharged);
+      tickModifiers(state);
+    }
     if (state.partner) {
       state.money -= MONTHLY_COST;
       state.totalCosts += MONTHLY_COST;
@@ -219,6 +248,18 @@ function closeRemaining(state) {
   const last = state.lastMonthCharged || currentMonth(state);
   const already = (state.ledger || []).some((r) => r.month === last);
   if (!already && last >= 1) closeMonth(state, last);
+}
+
+export function shouldDrawChest(state) {
+  return shouldDrawChestCard(state, currentMonth(state));
+}
+
+export function drawChest(state, rng) {
+  return drawChestCard(state, rng, currentMonth(state));
+}
+
+export function lessonLockOk(state) {
+  return !!(state.partner && state.hasAudience && state.usp);
 }
 
 export function runYear(state, rng) {

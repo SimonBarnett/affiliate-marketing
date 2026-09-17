@@ -116,6 +116,7 @@ const rng = mathRandomRng();
     welcomeHeroReady: false,
     sim: null,
     debrief: null,
+    chest: null,
   };
 
   // Preload welcome hero art (same folder as the JS / index.html)
@@ -271,6 +272,7 @@ const rng = mathRandomRng();
     S.saleAnims = []; S.scoresRecorded = false;
     S.hudAnimT = 0; S.hudDisplayMoney = 0; S.hudPrevMoney = 0; S.hudPulse = 0; S.hudSaleFlash = 0;
     S.debrief = null;
+    S.chest = null;
     randomiseProducts();
     S.sim = null;
     S.state = "setup";
@@ -1314,6 +1316,7 @@ const rng = mathRandomRng();
     if (S.lastSaleTimer > 0) {
       text(ctx, S.lastSaleMsg, BROWSER.x + BROWSER.w / 2, BROWSER.y + BROWSER.h - 22, C.GREEN, 13, false, "center");
     }
+    if (S.chest) drawChestModal(ctx);
 
     drawEquation(ctx, S.intensity, getConversion());
     text(ctx, "10–30% commission  ·  Partner $20/mo  ·  1s≈6 days  ·  Esc quit", W / 2, H - 28, C.GRAY, 11, false, "center");
@@ -1324,6 +1327,38 @@ const rng = mathRandomRng();
       const prefer = hit(PROMOTE, S.mouse.x, S.mouse.y);
       drawTooltip(ctx, S.hoverHelp, S.mouse.x, S.mouse.y, prefer, PROMOTE);
     }
+  }
+
+  function drawChestModal(ctx) {
+    const ch = S.chest;
+    const card = ch.card || {};
+    ctx.fillStyle = "rgba(8,10,16,0.72)";
+    ctx.fillRect(0, 0, W, H);
+    const box = { x: W / 2 - 250, y: 180, w: 500, h: 280 };
+    fillRound(ctx, C.PANEL, box.x, box.y, box.w, box.h, 14);
+    strokeRound(ctx, C.ORANGE, box.x, box.y, box.w, box.h, 14, 3);
+    text(ctx, "COMMUNITY CHEST", box.x + box.w / 2, box.y + 16, C.ORANGE, 16, true, "center");
+    text(ctx, card.title || card.id || "Card", box.x + box.w / 2, box.y + 48, C.WHITE, 20, true, "center");
+    const lock = ch.healthy ? "Lesson lock held" : "Lesson lock broken — no gift";
+    text(ctx, lock, box.x + box.w / 2, box.y + 78, ch.healthy ? C.GREEN : C.RED, 13, true, "center");
+    wrapModalText(ctx, (ch.result && ch.result.note) || card.lesson || "", box.x + 28, box.y + 110, box.w - 56, C.GRAY, 14);
+    wrapModalText(ctx, card.lesson || "", box.x + 28, box.y + 170, box.w - 56, [180, 190, 210], 13);
+    fillRound(ctx, C.GREEN, box.x + box.w / 2 - 70, box.y + box.h - 52, 140, 36, 8);
+    text(ctx, "OK", box.x + box.w / 2, box.y + box.h - 42, C.BLACK, 16, true, "center");
+  }
+
+  function wrapModalText(ctx, str, x, y, maxW, col, size) {
+    const words = String(str).split(" ");
+    let line = "", yy = y;
+    words.forEach((w) => {
+      const trial = line ? line + " " + w : w;
+      ctx.font = size + "px Segoe UI, sans-serif";
+      if (ctx.measureText(trial).width > maxW && line) {
+        text(ctx, line, x, yy, col, size, false, "left");
+        line = w; yy += size + 4;
+      } else line = trial;
+    });
+    if (line) text(ctx, line, x, yy, col, size, false, "left");
   }
 
   // ---- Input / update ----
@@ -1380,9 +1415,20 @@ const rng = mathRandomRng();
     }
   }
 
+  function maybeDrawChest() {
+    if (S.state !== "running" || !S.sim || S.chest) return;
+    S.sim.intensity = S.intensity;
+    if (K.shouldDrawChest(S.sim)) {
+      S.chest = K.drawChest(S.sim, rng);
+      pullSim();
+    }
+  }
+
   function onPointerDown(lx, ly) {
     ensureAudio();
     S.mouse = { x: lx, y: ly };
+
+    if (S.chest) { S.chest = null; return; }
 
     if (S.state === "welcome") {
       resetStrategies(); resetGame(false);
@@ -1486,7 +1532,7 @@ const rng = mathRandomRng();
       S.holding = false;
       S.cooldown = COOLDOWN;
       S.promoteLock = true;
-      // traffic starts falling immediately when cooldown begins
+      maybeDrawChest();
     }
   }
 
@@ -1534,6 +1580,7 @@ const rng = mathRandomRng();
         S.intensity = Math.min(100, S.intensity + dt * 120);
         if (S.holdDur >= MAX_HOLD) {
           S.holding = false; S.cooldown = COOLDOWN; S.promoteLock = true;
+          maybeDrawChest();
         }
         // adspend while promoting
         if (S.intensity > 1) {
@@ -1550,9 +1597,8 @@ const rng = mathRandomRng();
 
       // day progression: 1s real ≈ 6 game days
       S.dayTimer += dt * 6;
-      while (S.dayTimer >= 1 && S.state === "running") {
+      while (S.dayTimer >= 1 && S.state === "running" && !S.chest) {
         S.dayTimer -= 1;
-        S.day += 1;
 
         if (!S.sim) bindSim();
         S.sim.intensity = S.intensity;
