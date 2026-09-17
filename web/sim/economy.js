@@ -1,0 +1,30 @@
+/** Frozen from web/affiliate_marketing.js — WP0. No DOM. */
+
+export const MONTHLY_COST = 20;
+export const ADSPEND_MONTHLY_CAP = 200;
+export const ADSPEND_HARD_CAP = 1000;
+export const PAID_SEARCH_DAILY = 6;
+export const CONTACT_ENGAGEMENT_BONUS = 1.0;
+export const CONTACT_TRAFFIC_BONUS = 15;
+export const SEO_TRAFFIC_POINTS = 18;
+export const SEO_TRAFFIC_CLUB = 3.5;
+export const SEO_CLUB_CONV_HAIRCUT = 0.25;
+export const CPC_BASE = 0.75;
+export const AUDIENCE_CPC = 0.15;
+export const VISITORS_PER_INTENSITY = 0.5;
+export const DAYS_PER_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 25];
+export const TOTAL_DAYS = DAYS_PER_MONTH.reduce((a, b) => a + b, 0);
+export const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+export const MIN_WORTH_IT = 600;
+export const ACCEPTABLE_DECLINE = 0.5;
+export const LOSS_PROMOTE_LIMIT = -100;
+export const EARLY_CONTRACT_LOSS = -1000;
+export const CLUB_SHARE = 0.25;
+export const PARTNER_SHARE = 0.25;
+export const PLATFORM_SHARE = 0.5;
+export const CAPTURE_USP = 1.0;
+export const CAPTURE_AUDIENCE = 0.65;
+export const CAPTURE_COLD = 0.9;
+export const PAID_SEARCH_TRAFFIC = 14;
+export const PROMOTE_LOW = 5;
+export const CURRENCY = "$";

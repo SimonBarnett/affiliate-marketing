@@ -28,7 +28,13 @@ Then visit `http://localhost:8080`. The game mounts with:
 AffiliateMarketing.mount(document.getElementById('am-game'));
 ```
 
-High scores and last P&L live in `localStorage` (`am_highscores_v1`, `am_last_pnl_v1`).
+High scores and last P&L live in `localStorage` (`am_highscores_v1`, `am_last_pnl_v1`). Month debrief is `am_last_ledger_v1`.
+
+Year math is in `web/sim/` (no DOM). Tests (Node 20+):
+
+```powershell
+npm test
+```
 
 ### Amplify
 

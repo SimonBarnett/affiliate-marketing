@@ -1,14 +1,24 @@
 /**
  * Affiliate Marketing Simulator — Web / Canvas port
  * Embed: AffiliateMarketing.mount(document.getElementById('game-root'));
- * Host the JS on AWS (S3 + CloudFront). localStorage replaces highscores.json.
+ * Year math lives in ./sim (DOM-free). This file is view + input.
  *
  * Logical resolution: 1280×820 (letterboxed to container).
  */
-(function (global) {
-  "use strict";
+import {
+  MONTHLY_COST, ADSPEND_MONTHLY_CAP, ADSPEND_HARD_CAP, PAID_SEARCH_DAILY,
+  CONTACT_ENGAGEMENT_BONUS, CONTACT_TRAFFIC_BONUS,
+  SEO_TRAFFIC_POINTS, SEO_TRAFFIC_CLUB, SEO_CLUB_CONV_HAIRCUT,
+  CPC_BASE, AUDIENCE_CPC, VISITORS_PER_INTENSITY,
+  DAYS_PER_MONTH, TOTAL_DAYS, MONTH_NAMES, MIN_WORTH_IT, ACCEPTABLE_DECLINE,
+  EARLY_CONTRACT_LOSS, LOSS_PROMOTE_LIMIT,
+} from "./sim/economy.js";
+import { mathRandomRng } from "./sim/rng.js";
+import * as K from "./sim/kernel.js";
+import { debriefSentences, ledgerTotals, LS_LEDGER } from "./sim/ledger.js";
 
-  const W = 1280, H = 820;
+const W = 1280, H = 820;
+const rng = mathRandomRng();
 
   // ---- Colours ----
   const C = {
@@ -23,20 +33,6 @@
   const rgb = (a) => `rgb(${a[0]},${a[1]},${a[2]})`;
   const rgba = (a, al) => `rgba(${a[0]},${a[1]},${a[2]},${al})`;
 
-  // ---- Economy / timing ----
-  const MONTHLY_COST = 20;
-  const ADSPEND_MONTHLY_CAP = 200, ADSPEND_HARD_CAP = 1000;
-  const PAID_SEARCH_DAILY = 6;
-  const CONTACT_ENGAGEMENT_BONUS = 1.0, CONTACT_TRAFFIC_BONUS = 15;
-  const SEO_TRAFFIC_POINTS = 18;      // cold site / no audience — organic ranking
-  const SEO_TRAFFIC_CLUB = 3.5;       // club site with audience — few extra visitors
-  const SEO_CLUB_CONV_HAIRCUT = 0.25; // product-searchers convert poorly on a club domain
-  const CPC_BASE = 0.75, AUDIENCE_CPC = 0.15, VISITORS_PER_INTENSITY = 0.5;
-  const DAYS_PER_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 25];
-  const TOTAL_DAYS = DAYS_PER_MONTH.reduce((a, b) => a + b, 0);
-  const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const MIN_WORTH_IT = 600, ACCEPTABLE_DECLINE = 0.5;
-  const LOSS_PROMOTE_LIMIT = -100, EARLY_CONTRACT_LOSS = -1000;
   const WELCOME_DURATION = 6, OUTRO_DURATION = 5;
   const MAX_HOLD = 1.0, COOLDOWN = 3.0;
 
@@ -118,6 +114,8 @@
     mouse: { x: 0, y: 0 }, keys: {},
     welcomeHero: null,
     welcomeHeroReady: false,
+    sim: null,
+    debrief: null,
   };
 
   // Preload welcome hero art (same folder as the JS / index.html)
@@ -139,6 +137,58 @@
 
   // ---- Persistence ----
   const LS_HS = "am_highscores_v1", LS_PNL = "am_last_pnl_v1";
+
+  function simSettings() {
+    return {
+      partner: S.partner,
+      hasAudience: S.hasAudience,
+      seo: S.seo,
+      contact: S.contact,
+      content: S.content,
+      paidSearch: paidSearchOn(),
+      usp: clubCommissionOn(),
+      reviews: S.conversion.some((c) => c.label === "Product reviews" && c.checked),
+      intensity: S.intensity,
+      products: S.products,
+      yearsCompleted: S.yearsCompleted,
+      lastYearNet: S.lastYearNet,
+    };
+  }
+  function bindSim() {
+    S.sim = K.createState(simSettings());
+    pullSim();
+  }
+  function pullSim() {
+    const s = S.sim;
+    if (!s) return;
+    S.day = s.day;
+    S.money = s.money;
+    S.totalRevenue = s.totalRevenue;
+    S.totalCommission = s.totalCommission;
+    S.totalAdspend = s.totalAdspend;
+    S.totalPromote = s.totalPromote;
+    S.totalPaidSearch = s.totalPaidSearch;
+    S.totalCosts = s.totalCosts;
+    S.salesCount = s.salesCount;
+    S.lastMonthCharged = s.lastMonthCharged;
+    S.monthlyAdspend = s.monthlyAdspend;
+  }
+  function viewSim() {
+    if (S.sim) {
+      S.sim.intensity = S.intensity;
+      S.sim.partner = S.partner;
+      S.sim.hasAudience = S.hasAudience;
+      S.sim.seo = S.seo;
+      S.sim.contact = S.contact;
+      S.sim.content = S.content;
+      S.sim.paidSearch = paidSearchOn();
+      S.sim.usp = clubCommissionOn();
+      S.sim.reviews = S.conversion.some((c) => c.label === "Product reviews" && c.checked);
+      S.sim.products = S.products;
+      return S.sim;
+    }
+    return K.createState(simSettings());
+  }
   function loadHS() {
     try { S.highScores = JSON.parse(localStorage.getItem(LS_HS) || "[]"); } catch (e) { S.highScores = []; }
   }
@@ -151,6 +201,9 @@
       if (p) { S.lastPnl = p; S.lastGameoverAvailable = true; }
     } catch (e) {}
     if (S.highScores.length) S.lastGameoverAvailable = true;
+  }
+  function saveLedger(ledger) {
+    try { localStorage.setItem(LS_LEDGER, JSON.stringify(ledger || [])); } catch (e) {}
   }
   function saveLastPnl() {
     try { localStorage.setItem(LS_PNL, JSON.stringify(S.lastPnl)); } catch (e) {}
@@ -217,7 +270,9 @@
     S.lastSaleMsg = ""; S.lastSaleTimer = 0; S.flashIdx = -1; S.flashTimer = 0;
     S.saleAnims = []; S.scoresRecorded = false;
     S.hudAnimT = 0; S.hudDisplayMoney = 0; S.hudPrevMoney = 0; S.hudPulse = 0; S.hudSaleFlash = 0;
+    S.debrief = null;
     randomiseProducts();
+    S.sim = null;
     S.state = "setup";
   }
 
@@ -244,93 +299,25 @@
   function paidSearchOn() { return S.conversion.some((c) => c.label === "Paid search" && c.checked); }
   function clubCommissionOn() { return S.conversion.some((c) => c.mult && c.checked); }
 
-  function getConversion() {
-    let base = 1.0, other = 0, clubBonus = 0, clubOn = false;
-    S.conversion.forEach((c) => {
-      if (c.mult) { clubOn = c.checked; if (clubOn) clubBonus = c.bonus; }
-      else if (c.checked) other += c.bonus;
-    });
-    if (S.contact && S.hasAudience) other += CONTACT_ENGAGEMENT_BONUS;
-    let conv = clubOn ? base + clubBonus + other * 2.0 : base + other;
-    // Product-intent SEO on a club site: shoppers click Amazon/vendor, not the club
-    if (S.seo && S.hasAudience) conv = Math.max(0.5, conv - SEO_CLUB_CONV_HAIRCUT);
-    return conv;
-  }
-
-  function getTrafficPotential() {
-    let seoT = 0;
-    if (S.seo) {
-      // Club domains rarely win product SERPs vs main vendors
-      seoT = S.hasAudience ? SEO_TRAFFIC_CLUB : SEO_TRAFFIC_POINTS;
-      if (S.partner && !S.hasAudience) seoT *= 1.25;
-    }
-    let paidT = paidSearchOn() ? 14 : 0;
-    if (paidSearchOn() && S.partner) paidT *= 1.15;
-    if (S.hasAudience) {
-      let organic = 25, strat = 0;
-      if (S.content) strat += 14;
-      if (S.contact) strat += CONTACT_TRAFFIC_BONUS;
-      let promo;
-      if (S.partner) { strat *= 2; promo = S.intensity * 0.5; }
-      else promo = S.intensity * 0.35;
-      return Math.max(0, Math.min(100, organic + strat + promo + seoT + paidT));
-    }
-    const promo = S.intensity * (S.partner ? 1.5 : 1.0);
-    return Math.max(0, Math.min(100, promo + seoT + paidT));
-  }
-
-  function getTraffic() {
-    let base = getTrafficPotential();
-    if (S.hasAudience && !S.partner) base = Math.max(0, base - 12.5);
-    return Math.max(0, Math.min(100, base));
-  }
-
-  function getCommissionCapture() {
-    if (clubCommissionOn() && S.hasAudience) return 1.0;
-    if (S.hasAudience) return 0.65;
-    return 0.9;
-  }
-
-  function communityShareNow() {
-    const fee = Math.max(0, S.totalCosts - S.totalAdspend);
-    return S.totalCommission * 0.25 - S.totalAdspend - fee;
-  }
-
-  function dayToDate(d) {
-    let rem = d;
-    for (let mi = 0; mi < DAYS_PER_MONTH.length; mi++) {
-      if (rem < DAYS_PER_MONTH[mi]) return { mi, dom: rem + 1 };
-      rem -= DAYS_PER_MONTH[mi];
-    }
-    return { mi: 11, dom: 25 };
-  }
+  function getConversion() { return K.getConversion(viewSim()); }
+  function getTrafficPotential() { return K.getTrafficPotential(viewSim()); }
+  function getTraffic() { return K.getTraffic(viewSim()); }
+  function getCommissionCapture() { return K.getCommissionCapture(viewSim()); }
+  function communityShareNow() { return K.communityShare(viewSim()); }
+  function dayToDate(d) { return K.dayToDate(d); }
   function currentDateStr() {
     const { mi, dom } = dayToDate(Math.min(S.day, TOTAL_DAYS - 1));
     return MONTH_NAMES[mi] + " " + dom;
   }
-  function currentMonth() { return dayToDate(Math.min(S.day, TOTAL_DAYS - 1)).mi + 1; }
+  function currentMonth() { return K.currentMonth({ day: S.day }); }
 
-  function tryAutoSale() {
-    if (!S.partner || !S.products.length) return 0;
-    const conv = getConversion(), traffic = getTraffic();
-    const visitors = (traffic / 100) * 40;
-    const expected = visitors * (conv / 100);
-    const p = Math.min(0.92, expected);
-    if (Math.random() >= p) return 0;
-    const prod = pick(S.products);
-    const rate = prod.commission_rate;
-    const commission = prod.price * rate * getCommissionCapture();
-    S.totalRevenue += prod.price;
-    S.totalCommission += commission;
-    const clubEarn = commission * 0.25;
-    S.money += clubEarn;
-    S.salesCount += 1;
-    S.lastSaleMsg = `SOLD ${prod.name}  +$${Math.round(clubEarn).toLocaleString()}  (${Math.round(rate * 100)}%)`;
+  function spawnSaleFx(sale) {
+    if (!sale) return;
+    S.lastSaleMsg = `SOLD ${sale.name}  +$${Math.round(sale.clubEarn).toLocaleString()}  (${Math.round(sale.rate * 100)}%)`;
     S.lastSaleTimer = 2;
-    S.flashIdx = S.products.indexOf(prod);
+    S.flashIdx = Math.max(0, S.products.indexOf(sale.product));
     S.flashTimer = 0.6;
     playSaleSound();
-    // Rising coin + value over the product card (matches original Pygame)
     const cols = 3, gap = 14;
     const content = { x: BROWSER.x + 7, y: BROWSER.y + 48, w: BROWSER.w - 14, h: BROWSER.h - 56 };
     const cw = (content.w - gap * (cols + 1)) / cols;
@@ -338,13 +325,11 @@
     const col = i % cols, row = Math.floor(i / cols);
     const px = content.x + gap + col * (cw + gap) + cw / 2;
     const py = content.y + gap + row * 145 + 50;
-    const label = "+$" + Math.round(clubEarn).toLocaleString("en-US");
-    // Main value float
+    const label = "+$" + Math.round(sale.clubEarn).toLocaleString("en-US");
     S.saleAnims.push({
       x: px, y: py, vx: 0, vy: -70, t: 0, life: 1.1,
       text: label, kind: "value", scale: 1,
     });
-    // Extra coins fanning up
     for (let k = 0; k < 3; k++) {
       S.saleAnims.push({
         x: px + (k - 1) * 14,
@@ -358,96 +343,15 @@
         scale: 1 - k * 0.1,
       });
     }
-    return 1;
   }
 
   function trafficWithIntensity(sim) {
-    let seoT = 0;
-    if (S.seo) {
-      // Club domains rarely win product SERPs vs main vendors
-      seoT = S.hasAudience ? SEO_TRAFFIC_CLUB : SEO_TRAFFIC_POINTS;
-      if (S.partner && !S.hasAudience) seoT *= 1.25;
-    }
-    let paidT = paidSearchOn() ? 14 : 0;
-    if (paidSearchOn() && S.partner) paidT *= 1.15;
-    if (S.hasAudience) {
-      let organic = 25, strat = 0;
-      if (S.content) strat += 14;
-      if (S.contact) strat += CONTACT_TRAFFIC_BONUS;
-      let promo;
-      if (S.partner) { strat *= 2; promo = sim * 0.5; }
-      else promo = sim * 0.35;
-      let base = organic + strat + promo + seoT + paidT;
-      if (!S.partner) base = Math.max(0, base - 12.5);
-      return Math.max(0, Math.min(100, base));
-    }
-    return Math.max(0, Math.min(100, sim * (S.partner ? 1.5 : 1) + seoT + paidT));
+    return K.trafficWithIntensity(viewSim(), sim);
   }
 
   function finalizeYearAccounts() {
-    const ytdSales = S.salesCount, ytdRev = S.totalRevenue, ytdComm = S.totalCommission;
-    const ytdAd = S.totalAdspend, ytdCosts = S.totalCosts, ytdMoney = S.money;
-    const daysDone = Math.max(0, Math.min(S.day, TOTAL_DAYS));
-    const remaining = Math.max(0, TOTAL_DAYS - daysDone);
-    const avgPromo = 30;
-    const traffic = S.partner ? trafficWithIntensity(avgPromo) : 0;
-    const conv = S.partner ? Math.max(0.5, getConversion()) : 0;
-    const expectedPerDay = (traffic / 100) * 40 * (conv / 100);
-    const nRem = Math.max(0, Math.round(expectedPerDay * remaining * rnd(0.92, 1.08)));
-    let extraRev = 0, extraComm = 0, extraSales = 0;
-    for (let i = 0; i < nRem; i++) {
-      const prod = pick(S.products.length ? S.products : [{ price: 29.99, commission_rate: 0.2 }]);
-      const commission = prod.price * (prod.commission_rate || 0.2) * getCommissionCapture();
-      extraComm += commission; extraRev += prod.price; extraSales++;
-    }
-    let cpc = S.hasAudience
-      ? AUDIENCE_CPC * (S.partner ? 0.65 : 1)
-      : CPC_BASE * (S.partner ? 0.65 : 1);
-    if (S.seo || paidSearchOn()) cpc *= 2;
-    const visitors = avgPromo * VISITORS_PER_INTENSITY;
-    const monthsLeft = Math.max(1, 12 - S.lastMonthCharged);
-    const monthlyCap = S.hasAudience ? ADSPEND_MONTHLY_CAP : ADSPEND_HARD_CAP;
-    const promoteRest = Math.min(visitors * cpc * remaining * 0.35, monthlyCap * monthsLeft);
-    let psRest = 0;
-    if (paidSearchOn() && remaining > 0) {
-      const daily = PAID_SEARCH_DAILY * (S.partner ? 0.75 : 1);
-      psRest = Math.min(daily * remaining, ADSPEND_HARD_CAP * monthsLeft);
-    }
-    let partnerRest = 0;
-    if (S.partner && 12 - S.lastMonthCharged > 0) partnerRest = MONTHLY_COST * (12 - S.lastMonthCharged);
-
-    if (daysDone === 0 && ytdSales === 0) {
-      // full-year estimate path
-      S.salesCount = 0; S.totalRevenue = 0; S.totalCommission = 0;
-      S.totalAdspend = 0; S.totalPromote = 0; S.totalPaidSearch = 0; S.totalCosts = 0; S.money = 0;
-      const nFull = Math.max(0, Math.round(expectedPerDay * TOTAL_DAYS * rnd(0.92, 1.08)));
-      for (let i = 0; i < nFull; i++) {
-        const prod = pick(S.products.length ? S.products : [{ price: 29.99, commission_rate: 0.2 }]);
-        const commission = prod.price * (prod.commission_rate || 0.2) * getCommissionCapture();
-        S.totalRevenue += prod.price; S.totalCommission += commission;
-        S.money += commission * 0.25; S.salesCount++;
-      }
-      let promoYear = Math.min(visitors * cpc * TOTAL_DAYS * 0.35, monthlyCap * 12);
-      if (S.seo || paidSearchOn()) promoYear *= 2;
-      S.money -= promoYear; S.totalAdspend += promoYear; S.totalPromote += promoYear; S.totalCosts += promoYear;
-      if (paidSearchOn()) {
-        const ps = Math.min(PAID_SEARCH_DAILY * (S.partner ? 0.75 : 1) * TOTAL_DAYS, ADSPEND_HARD_CAP * 12);
-        S.money -= ps; S.totalAdspend += ps; S.totalPaidSearch += ps; S.totalCosts += ps;
-      }
-      if (S.partner) { const fee = MONTHLY_COST * 12; S.money -= fee; S.totalCosts += fee; }
-    } else {
-      S.salesCount = ytdSales + extraSales;
-      S.totalRevenue = ytdRev + extraRev;
-      S.totalCommission = ytdComm + extraComm;
-      S.totalAdspend = ytdAd + promoteRest + psRest;
-      S.totalPromote += promoteRest;
-      S.totalPaidSearch += psRest;
-      S.totalCosts = ytdCosts + promoteRest + psRest + partnerRest;
-      S.money = ytdMoney + extraComm * 0.25 - promoteRest - psRest - partnerRest;
-    }
-    S.lastMonthCharged = 12;
-    S.day = TOTAL_DAYS;
-    S.monthlyAdspend = 0;
+    K.finalizeYearAccounts(viewSim(), rng);
+    pullSim();
   }
 
   function snapshotPnl(forceReason) {
@@ -488,7 +392,12 @@
     S.lastPnl.last_year_net = S.lastYearNet;
     S.lastGameoverAvailable = true;
     S.viewingHistorical = false;
+    const ledger = (S.sim && S.sim.ledger) || [];
+    S.debrief = debriefSentences(ledger);
+    S.lastPnl.ledger = ledger;
+    S.lastPnl.uspOffCommissionLost = ledgerTotals(ledger).uspOffCommissionLost;
     saveLastPnl();
+    saveLedger(ledger);
   }
 
   function recordHighScore() {
@@ -1051,7 +960,7 @@
   function drawGameOver(ctx) {
     ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(0, 0, W, H);
     // Fit inside logical canvas with margin so the page never needs a scrollbar
-    const boxH = 560;
+    const boxH = 640;
     const box = { x: W / 2 - 270, y: Math.max(16, (H - boxH) / 2), w: 540, h: boxH };
     fillRound(ctx, C.PANEL, box.x, box.y, box.w, box.h, 16);
     strokeRound(ctx, C.ORANGE, box.x, box.y, box.w, box.h, 16, 3);
@@ -1162,6 +1071,32 @@
     } else if (S.lastPnl && S.lastPnl.disappointment) {
       text(ctx, "Community is disappointed (decline within 50% tolerance).", box.x + box.w / 2, y, C.ORANGE, 12, false, "center");
       y += 24;
+    }
+
+    const ledger = (S.lastPnl && S.lastPnl.ledger) || (S.sim && S.sim.ledger) || [];
+    const lines = S.debrief || (ledger.length ? debriefSentences(ledger) : []);
+    if (ledger.length) {
+      const barX = box.x + 30, barW = box.w - 60, barH = 28;
+      const n = Math.max(1, ledger.length);
+      const slot = barW / n;
+      const peak = Math.max(1, ...ledger.map((r) => Math.abs(r.clubCommission) || r.promoteIntensity || 0));
+      for (let i = 0; i < ledger.length; i++) {
+        const r = ledger[i];
+        const h = Math.max(2, Math.round(((Math.abs(r.clubCommission) || r.promoteIntensity || 0) / peak) * (barH - 2)));
+        const bx = barX + i * slot + 2;
+        const bw = Math.max(4, slot - 4);
+        const col = r.uspOn ? C.GREEN : C.ORANGE;
+        ctx.fillStyle = rgb(col);
+        ctx.globalAlpha = 0.85;
+        ctx.fillRect(bx, y + barH - h, bw, h);
+        ctx.globalAlpha = 1;
+      }
+      y += barH + 6;
+      lines.forEach((ln) => {
+        text(ctx, ln, box.x + box.w / 2, y, C.GRAY, 11, false, "center");
+        y += 14;
+      });
+      y += 6;
     }
 
     text(ctx, "TOP SCORES  ·  click to load setup", box.x + box.w / 2, y, C.BLUE, 12, true, "center");
@@ -1525,6 +1460,7 @@
         c.checked = !c.checked;
       });
       if (hit(START, lx, ly)) {
+        bindSim();
         S.state = "running"; S.day = 0; S.hudAnimT = 0; S.hudDisplayMoney = 0;
       }
       return;
@@ -1533,7 +1469,9 @@
     if (S.state === "running") {
       const qr = quitRect();
       if (hit(qr, lx, ly)) {
-        finalizeYearAccounts(); recordHighScore(); snapshotPnl();
+        if (!S.sim) bindSim();
+        K.endRun(S.sim, rng); pullSim();
+        recordHighScore(); snapshotPnl();
         S.state = "gameover";
         return;
       }
@@ -1616,45 +1554,15 @@
         S.dayTimer -= 1;
         S.day += 1;
 
-        // paid search daily
-        if (paidSearchOn()) {
-          const rem = Math.max(0, ADSPEND_HARD_CAP - S.monthlyAdspend);
-          const daily = PAID_SEARCH_DAILY * (S.partner ? 0.75 : 1);
-          const ps = Math.min(daily, rem);
-          if (ps > 0) {
-            S.money -= ps; S.totalAdspend += ps; S.totalPaidSearch += ps;
-            S.totalCosts += ps; S.monthlyAdspend += ps;
-          }
-        }
-        // promote cost for this day if intensity high
-        if (S.intensity > 1) {
-          const visitors = S.intensity * VISITORS_PER_INTENSITY;
-          let cpc = S.hasAudience ? AUDIENCE_CPC : CPC_BASE;
-          if (S.partner) cpc *= 0.65;
-          if (S.seo || paidSearchOn()) cpc *= 2;
-          let spend = visitors * cpc;
-          const cap = S.hasAudience ? Math.min(ADSPEND_MONTHLY_CAP, ADSPEND_HARD_CAP) : ADSPEND_HARD_CAP;
-          const rem = Math.max(0, cap - S.monthlyAdspend);
-          spend = Math.min(spend, rem);
-          if (S.hasAudience && rem > 0 && spend < 0.05) spend = Math.min(0.05, rem);
-          if (spend > 0) {
-            S.money -= spend; S.totalAdspend += spend; S.totalPromote += spend;
-            S.totalCosts += spend; S.monthlyAdspend += spend;
-          }
-        }
-        tryAutoSale();
-        const m = currentMonth();
-        if (m > S.lastMonthCharged && m <= 12) {
-          if (S.partner) { S.money -= MONTHLY_COST; S.totalCosts += MONTHLY_COST; }
-          S.lastMonthCharged = m;
-          S.monthlyAdspend = 0;
-        }
-        if (S.money < EARLY_CONTRACT_LOSS) {
-          finalizeYearAccounts(); recordHighScore(); snapshotPnl("early_loss");
-          S.state = "gameover"; break;
-        }
-        if (S.day >= TOTAL_DAYS) {
-          finalizeYearAccounts(); recordHighScore(); snapshotPnl();
+        if (!S.sim) bindSim();
+        S.sim.intensity = S.intensity;
+        S.sim.products = S.products;
+        const step = K.stepDay(S.sim, rng);
+        pullSim();
+        if (step.sale) spawnSaleFx(step.sale);
+        if (step.ended) {
+          recordHighScore();
+          snapshotPnl(step.endReason === "early_loss" ? "early_loss" : null);
           S.state = "gameover"; break;
         }
       }
@@ -1768,5 +1676,5 @@
     };
   }
 
-  global.AffiliateMarketing = { mount, WIDTH: W, HEIGHT: H };
-})(typeof window !== "undefined" ? window : globalThis);
+export const AffiliateMarketing = { mount, WIDTH: W, HEIGHT: H };
+if (typeof window !== "undefined") window.AffiliateMarketing = AffiliateMarketing;

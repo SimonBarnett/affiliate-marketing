@@ -1,0 +1,12 @@
+{
+  "partner": true,
+  "hasAudience": true,
+  "seo": false,
+  "contact": true,
+  "content": true,
+  "paidSearch": false,
+  "usp": false,
+  "reviews": true,
+  "intensity": 40,
+  "products": [{ "name": "Widget", "price": 20, "commission_rate": 0.2 }]
+}
