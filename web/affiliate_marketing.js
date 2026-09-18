@@ -73,7 +73,23 @@ const rng = mathRandomRng();
   const CONV_START_Y = STRATEGY_START_Y;
   const TRAFFIC_KNOB = { x: 825, y: 130 }, CONV_KNOB = { x: 1105, y: 130 }, KNOB_R = 55;
 
-  function hudRect() { return { x: CONV_COL.x + 8, y: 390, w: CONV_COL.w - 16, h: 175 }; }
+  function folioMode() {
+    return (S.seat === "partner" || S.seat === "platform") && S.clubs && S.clubs.length;
+  }
+  function promoteRect() {
+    if (!folioMode()) return PROMOTE;
+    return { x: TRAFFIC_COL.x + 20, y: 548, w: TRAFFIC_COL.w - 40, h: 44 };
+  }
+  function startRect() {
+    if (!folioMode()) return START;
+    return { x: CONV_COL.x + 20, y: 548, w: CONV_COL.w - 40, h: 44 };
+  }
+  function hudRect() {
+    if (folioMode() && S.state === "running") {
+      return { x: CONV_COL.x + 8, y: 400, w: CONV_COL.w - 16, h: 140 };
+    }
+    return { x: CONV_COL.x + 8, y: 390, w: CONV_COL.w - 16, h: 175 };
+  }
   function quitRect() { const h = hudRect(); return { x: h.x + 10, y: h.y + h.h - 30, w: h.w - 20, h: 24 }; }
 
   // ---- Help text ----
@@ -577,15 +593,22 @@ const rng = mathRandomRng();
     [[BROWSER.x + 18, C.RED], [BROWSER.x + 36, C.ORANGE], [BROWSER.x + 54, C.GREEN]].forEach(([x, col]) => {
       ctx.beginPath(); ctx.arc(x, BROWSER.y + 18, 6, 0, Math.PI * 2); ctx.fillStyle = rgb(col); ctx.fill();
     });
-    const site = S.partner && S.clubUrl ? S.clubUrl : null;
-    text(ctx, site ? `Web Catalogue  –  ${site}` : "Web Catalogue  –  (no club site)", BROWSER.x + 72, BROWSER.y + 10, C.WHITE, 15, true);
+    const liveClub = folioMode() ? (S.clubs || []).find((c) => c.onboarded && c.partner && !c.churned) : null;
+    const site = (S.partner && S.clubUrl) ? S.clubUrl : (liveClub ? (liveClub.name.toLowerCase().replace(/\s+/g, "") + ".com") : null);
+    text(ctx, site ? `Web Catalogue  –  ${site}` : (folioMode() ? "Web Catalogue  –  onboard a club" : "Web Catalogue  –  (no club site)"), BROWSER.x + 72, BROWSER.y + 10, C.WHITE, 15, true);
     fillRound(ctx, [25, 28, 38], BROWSER.x + 16, BROWSER.y + 38, 420, 22, 5);
-    text(ctx, site ? `  https://${site}/catalogue` : "  (no website — partner required to host catalogue)", BROWSER.x + 20, BROWSER.y + 42, site ? C.GRAY : C.DARK, 11);
+    text(ctx, site ? `  https://${site}/catalogue` : (folioMode() ? "  Catalogue = tracked storefront. Print pack = $500 untracked." : "  (no website — partner required to host catalogue)"), BROWSER.x + 20, BROWSER.y + 42, site ? C.GRAY : C.DARK, 11);
 
-    if (!S.partner) {
-      text(ctx, "No club website", BROWSER.x + BROWSER.w / 2, BROWSER.y + BROWSER.h / 2 - 30, C.GRAY, 18, true, "center");
-      text(ctx, "Enable Partner Promotion — they recommend a club and put Smart Catalogue on its page.", BROWSER.x + BROWSER.w / 2, BROWSER.y + BROWSER.h / 2, [140, 150, 170], 13, false, "center");
-      text(ctx, "Without a partner there is no site to log into and no storefront — and no sales.", BROWSER.x + BROWSER.w / 2, BROWSER.y + BROWSER.h / 2 + 22, C.DARK, 12, false, "center");
+    if (!S.partner && !liveClub) {
+      text(ctx, folioMode() ? "No catalogue live yet" : "No club website", BROWSER.x + BROWSER.w / 2, BROWSER.y + BROWSER.h / 2 - 30, C.GRAY, 18, true, "center");
+      text(ctx, folioMode()
+        ? "For each club pick Catalogue (tracked, can earn) or Print pack (untracked spend)."
+        : "Enable Partner Promotion — they recommend a club and put Smart Catalogue on its page.",
+        BROWSER.x + BROWSER.w / 2, BROWSER.y + BROWSER.h / 2, [140, 150, 170], 13, false, "center");
+      text(ctx, folioMode()
+        ? "Print-only clubs never high-score. Two months with no Promote → churn."
+        : "Without a partner there is no site to log into and no storefront — and no sales.",
+        BROWSER.x + BROWSER.w / 2, BROWSER.y + BROWSER.h / 2 + 22, C.DARK, 12, false, "center");
     } else {
       const content = { x: BROWSER.x + 7, y: BROWSER.y + 48, w: BROWSER.w - 14, h: BROWSER.h - 56 };
       const cols = 3, gap = 14, cardW = (content.w - gap * (cols + 1)) / cols, cardH = 145;
@@ -604,7 +627,7 @@ const rng = mathRandomRng();
       });
     }
     // randomise (setup only)
-    if (S.state === "setup" && S.partner) {
+    if (S.state === "setup" && (S.partner || liveClub)) {
       fillRound(ctx, [40, 50, 70], RANDOMISE.x, RANDOMISE.y, RANDOMISE.w, RANDOMISE.h, 6);
       strokeRound(ctx, C.BLUE, RANDOMISE.x, RANDOMISE.y, RANDOMISE.w, RANDOMISE.h, 6, 1);
       text(ctx, "Randomise parts", RANDOMISE.x + RANDOMISE.w / 2, RANDOMISE.y + 6, C.WHITE, 12, false, "center");
@@ -621,6 +644,7 @@ const rng = mathRandomRng();
   }
 
   function drawPromote(ctx) {
+    const r = promoteRect();
     const lossLocked = S.money < LOSS_PROMOTE_LIMIT;
     const disabled = S.state !== "running" || S.promoteLock || S.cooldown > 0 || lossLocked;
     let label = "HOLD TO PROMOTE", color = C.BLUE, border = C.WHITE;
@@ -628,10 +652,10 @@ const rng = mathRandomRng();
     else if (S.cooldown > 0) { label = `COOLDOWN ${S.cooldown.toFixed(1)}s`; color = C.DARK; }
     else if (S.holding) { label = "PROMOTING..."; color = C.GREEN; }
     else if (disabled) { color = C.DISABLED; }
-    fillRound(ctx, color, PROMOTE.x, PROMOTE.y, PROMOTE.w, PROMOTE.h, 12);
-    strokeRound(ctx, border, PROMOTE.x, PROMOTE.y, PROMOTE.w, PROMOTE.h, 12, 3);
-    text(ctx, label, PROMOTE.x + PROMOTE.w / 2, PROMOTE.y + 14, C.WHITE, 16, true, "center");
-    text(ctx, "max 1s hold · 3s cooldown", PROMOTE.x + PROMOTE.w / 2, PROMOTE.y + PROMOTE.h + 6, C.GRAY, 11, false, "center");
+    fillRound(ctx, color, r.x, r.y, r.w, r.h, 12);
+    strokeRound(ctx, border, r.x, r.y, r.w, r.h, 12, 3);
+    text(ctx, label, r.x + r.w / 2, r.y + 12, C.WHITE, 15, true, "center");
+    text(ctx, "max 1s hold · 3s cooldown", r.x + r.w / 2, r.y + r.h + 4, C.GRAY, 10, false, "center");
   }
 
   function drawAudio(ctx) {
@@ -1246,53 +1270,53 @@ const rng = mathRandomRng();
 
   function drawPortfolio(ctx, canEdit) {
     S.pfHits = [];
-    const x = TRAFFIC_COL.x + 8, w = TRAFFIC_COL.w - 16;
-    let y = STRATEGY_START_Y - 20;
-    text(ctx, "PORTFOLIO  3–5 clubs", x + w / 2, y - 18, C.BLUE, 13, true, "center");
+    const x = TRAFFIC_COL.x + 10, w = TRAFFIC_COL.w - 20;
+    let y = 198;
+    text(ctx, "PORTFOLIO  ·  3–5 clubs", x + w / 2, y - 18, C.BLUE, 12, true, "center");
     (S.clubs || []).forEach((c, i) => {
-      const h = 52;
-      fillRound(ctx, [24, 26, 38], x, y, w, h, 8);
-      const status = c.churned ? "CHURNED" : (!c.onboarded ? "—" : (c.partner ? "LIVE" : "PRINT"));
-      const col = c.churned ? C.RED : (c.partner ? C.GREEN : (c.onboarded ? C.ORANGE : C.GRAY));
-      text(ctx, c.name, x + 8, y + 4, C.WHITE, 12, true);
-      text(ctx, status, x + w - 8, y + 4, col, 11, true, "right");
+      const h = 44;
+      fillRound(ctx, [24, 26, 38], x, y, w, h, 7);
+      const status = c.churned ? "CHURN" : (!c.onboarded ? "" : (c.partner ? "LIVE" : "PRINT"));
+      const col = c.churned ? C.RED : (c.partner ? C.GREEN : C.ORANGE);
+      text(ctx, c.name, x + 8, y + 3, C.WHITE, 12, true);
+      if (status) text(ctx, status, x + w - 8, y + 3, col, 10, true, "right");
       if (canEdit && !c.onboarded) {
-        const a = { x: x + 8, y: y + 24, w: 88, h: 22 }, b = { x: x + 102, y: y + 24, w: 88, h: 22 };
-        fillRound(ctx, C.GREEN, a.x, a.y, a.w, a.h, 6);
-        text(ctx, "Catalogue", a.x + 44, a.y + 4, C.BLACK, 11, true, "center");
-        fillRound(ctx, C.ORANGE, b.x, b.y, b.w, b.h, 6);
-        text(ctx, "Print pack", b.x + 44, b.y + 4, C.BLACK, 11, true, "center");
+        const a = { x: x + 8, y: y + 20, w: 110, h: 20 }, b = { x: x + 124, y: y + 20, w: 110, h: 20 };
+        fillRound(ctx, C.GREEN, a.x, a.y, a.w, a.h, 5);
+        text(ctx, "Catalogue", a.x + a.w / 2, a.y + 3, C.BLACK, 11, true, "center");
+        fillRound(ctx, C.ORANGE, b.x, b.y, b.w, b.h, 5);
+        text(ctx, "Print pack", b.x + b.w / 2, b.y + 3, C.BLACK, 11, true, "center");
         S.pfHits.push({ rect: a, act: "cat", i });
         S.pfHits.push({ rect: b, act: "print", i });
       } else {
-        const uspR = { x: x + 8, y: y + 24, w: 70, h: 22 };
+        const uspR = { x: x + 8, y: y + 20, w: 70, h: 20 };
         drawCheckbox(ctx, uspR.x, uspR.y, !!c.usp, "USP", canEdit && c.partner && !c.churned);
-        S.pfHits.push({ rect: { x: uspR.x, y: uspR.y, w: 120, h: 22 }, act: "usp", i });
-        const minus = { x: x + w - 78, y: y + 24, w: 22, h: 22 };
-        const plus = { x: x + w - 30, y: y + 24, w: 22, h: 22 };
+        S.pfHits.push({ rect: { x: uspR.x, y: uspR.y, w: 110, h: 20 }, act: "usp", i });
+        const minus = { x: x + w - 72, y: y + 20, w: 20, h: 20 };
+        const plus = { x: x + w - 28, y: y + 20, w: 20, h: 20 };
         fillRound(ctx, C.DARK, minus.x, minus.y, minus.w, minus.h, 4);
         fillRound(ctx, C.DARK, plus.x, plus.y, plus.w, plus.h, 4);
-        text(ctx, "−", minus.x + 11, minus.y + 3, C.WHITE, 14, true, "center");
-        text(ctx, "+", plus.x + 11, plus.y + 3, C.WHITE, 14, true, "center");
-        text(ctx, String(c.share || 1), x + w - 54, y + 26, C.GRAY, 11, false, "center");
+        text(ctx, "-", minus.x + 10, minus.y + 2, C.WHITE, 13, true, "center");
+        text(ctx, "+", plus.x + 10, plus.y + 2, C.WHITE, 13, true, "center");
+        text(ctx, String(c.share || 1), x + w - 50, y + 22, C.GRAY, 11, false, "center");
         S.pfHits.push({ rect: minus, act: "share-", i });
         S.pfHits.push({ rect: plus, act: "share+", i });
       }
-      y += h + 6;
+      y += h + 4;
     });
     if (canEdit && S.clubs && S.clubs.length < 5) {
-      const add = { x: x, y: y, w: w, h: 24 };
+      const add = { x: x, y: y, w: w, h: 22 };
       strokeRound(ctx, C.BLUE, add.x, add.y, add.w, add.h, 6, 1);
-      text(ctx, "+ club", add.x + add.w / 2, add.y + 4, C.BLUE, 12, true, "center");
+      text(ctx, "+ club", add.x + add.w / 2, add.y + 3, C.BLUE, 12, true, "center");
       S.pfHits.push({ rect: add, act: "add" });
     }
   }
 
   function drawPlatform(ctx, canEdit) {
     S.platHits = [];
-    const x = CONV_COL.x + 8, w = CONV_COL.w - 16;
-    let y = STRATEGY_START_Y - 20;
-    text(ctx, "MERCHANTS", x + w / 2, y - 18, C.ORANGE, 13, true, "center");
+    const x = CONV_COL.x + 10, w = CONV_COL.w - 20;
+    let y = 198;
+    text(ctx, "MERCHANTS", x + w / 2, y - 18, C.ORANGE, 12, true, "center");
     const merchants = (S.sim && S.sim.merchants) || S.merchants || K.defaultMerchants();
     merchants.forEach((m, i) => {
       const h = 36;
@@ -1319,7 +1343,8 @@ const rng = mathRandomRng();
     text(ctx, "Recruit partner", rec.x + rec.w / 2, rec.y + 6, C.BLACK, 13, true, "center");
     S.platHits.push({ rect: rec, act: "recruit" });
     const q = S.sim ? K.qualityScore(S.sim) : 0;
-    text(ctx, "Quality " + q.toFixed(2) + "  (promote × audience clubs × USP rate)", x + w / 2, y + 40, C.GRAY, 11, false, "center");
+    text(ctx, "Quality " + q.toFixed(2), x + w / 2, y + 36, C.WHITE, 12, true, "center");
+    text(ctx, "promote × audience × USP", x + w / 2, y + 52, C.GRAY, 10, false, "center");
   }
 
   function drawMain(ctx) {
@@ -1334,9 +1359,10 @@ const rng = mathRandomRng();
     drawKnob(ctx, TRAFFIC_KNOB.x, TRAFFIC_KNOB.y, KNOB_R, getTrafficPotential(), 100, C.BLUE, S.hasAudience ? "2k" : "0");
     drawKnob(ctx, CONV_KNOB.x, CONV_KNOB.y, KNOB_R, Math.max(0, getConversion() - 1), 7, C.ORANGE, "1%");
 
-    // strategy headings
-    text(ctx, "Traffic Strategy", TRAFFIC_COL.x + TRAFFIC_COL.w / 2, STRATEGY_START_Y - 28, C.BLUE, 13, true, "center");
-    text(ctx, "Conversion Strategy", CONV_COL.x + CONV_COL.w / 2, STRATEGY_START_Y - 28, C.ORANGE, 13, true, "center");
+    if (!folioMode()) {
+      text(ctx, "Traffic Strategy", TRAFFIC_COL.x + TRAFFIC_COL.w / 2, STRATEGY_START_Y - 28, C.BLUE, 13, true, "center");
+      text(ctx, "Conversion Strategy", CONV_COL.x + CONV_COL.w / 2, STRATEGY_START_Y - 28, C.ORANGE, 13, true, "center");
+    }
 
     const canEdit = S.state === "setup";
     const club = S.seat === "club";
@@ -1372,9 +1398,10 @@ const rng = mathRandomRng();
 
     if (S.state === "setup") {
       const ready = !folio || S.clubs.every((c) => c.onboarded);
-      fillRound(ctx, ready ? C.GREEN : C.DARK, START.x, START.y, START.w, START.h, 12);
-      strokeRound(ctx, C.WHITE, START.x, START.y, START.w, START.h, 12, 3);
-      text(ctx, ready ? "START YEAR" : "ONBOARD ALL CLUBS", START.x + START.w / 2, START.y + 14, ready ? C.BLACK : C.GRAY, 16, true, "center");
+      const sr = startRect();
+      fillRound(ctx, ready ? C.GREEN : C.DARK, sr.x, sr.y, sr.w, sr.h, 12);
+      strokeRound(ctx, C.WHITE, sr.x, sr.y, sr.w, sr.h, 12, 3);
+      text(ctx, ready ? "START YEAR" : "ONBOARD ALL CLUBS", sr.x + sr.w / 2, sr.y + 12, ready ? C.BLACK : C.GRAY, 15, true, "center");
     }
 
     // HUD when running (+ per-metric hover tips)
@@ -1515,8 +1542,8 @@ const rng = mathRandomRng();
     if (S.state === "gameover") drawGameOver(ctx);
 
     if (S.hoverHelp) {
-      const prefer = hit(PROMOTE, S.mouse.x, S.mouse.y);
-      drawTooltip(ctx, S.hoverHelp, S.mouse.x, S.mouse.y, prefer, PROMOTE);
+      const prefer = hit(promoteRect(), S.mouse.x, S.mouse.y);
+      drawTooltip(ctx, S.hoverHelp, S.mouse.x, S.mouse.y, prefer, promoteRect());
     }
   }
 
@@ -1564,7 +1591,7 @@ const rng = mathRandomRng();
     return null;
   }
   function lockConv(c) {
-    if (c.label === "Product reviews" && !S.partner) return "Locked: Product reviews need Partner Promotion.";
+    if (c.label === "Product reviews" && !S.partner && !folioMode()) return "Locked: Product reviews need Partner Promotion.";
     if (c.mult && !S.hasAudience) return "Locked: needs Has an Audience first.";
     return null;
   }
@@ -1585,27 +1612,29 @@ const rng = mathRandomRng();
       }
     }
     if (S.state === "setup" || S.state === "running") {
-      if (hit({ x: 710, y: PARTNER_Y, w: 250, h: 28 }, x, y)) S.hoverHelp = TRAFFIC_HELP.partner;
-      else if (hit({ x: 710, y: AUDIENCE_Y, w: 250, h: 28 }, x, y)) S.hoverHelp = lockTraffic("audience") || TRAFFIC_HELP.audience;
-      else if (hit({ x: 710, y: SEO_Y, w: 250, h: 28 }, x, y)) {
-        S.hoverHelp = S.seat === "club"
-          ? ("Print pack: $" + PRINT_COST + " catalogue drop. Untracked unless a QR + partner + Promote is live that month. Does not create sales on its own.")
-          : (lockTraffic("seo") || TRAFFIC_HELP.seo);
+      if (!folioMode()) {
+        if (hit({ x: 710, y: PARTNER_Y, w: 250, h: 28 }, x, y)) S.hoverHelp = TRAFFIC_HELP.partner;
+        else if (hit({ x: 710, y: AUDIENCE_Y, w: 250, h: 28 }, x, y)) S.hoverHelp = lockTraffic("audience") || TRAFFIC_HELP.audience;
+        else if (hit({ x: 710, y: SEO_Y, w: 250, h: 28 }, x, y)) {
+          S.hoverHelp = S.seat === "club"
+            ? ("Print pack: $" + PRINT_COST + " catalogue drop. Untracked unless a QR + partner + Promote is live that month. Does not create sales on its own.")
+            : (lockTraffic("seo") || TRAFFIC_HELP.seo);
+        }
+        else if (hit({ x: 710, y: CONTACT_Y, w: 250, h: 28 }, x, y)) S.hoverHelp = lockTraffic("contact") || TRAFFIC_HELP.contact;
+        else if (hit({ x: 710, y: CONTENT_Y, w: 250, h: 28 }, x, y)) S.hoverHelp = lockTraffic("content") || TRAFFIC_HELP.content;
       }
-      else if (hit({ x: 710, y: CONTACT_Y, w: 250, h: 28 }, x, y)) S.hoverHelp = lockTraffic("contact") || TRAFFIC_HELP.contact;
-      else if (hit({ x: 710, y: CONTENT_Y, w: 250, h: 28 }, x, y)) S.hoverHelp = lockTraffic("content") || TRAFFIC_HELP.content;
-      else if (hit(PROMOTE, x, y)) {
+      if (hit(promoteRect(), x, y)) {
         if (S.money < LOSS_PROMOTE_LIMIT) S.hoverHelp = "Promote blocked: community is more than $100 in the red.";
         else if (S.state !== "running") S.hoverHelp = "Available after START YEAR — lock strategies and begin.";
         else S.hoverHelp = "What: hold to promote (max 1s, then 3s cooldown). Money: to the partner only when Has an Audience; otherwise external. Costs 2× while SEO or Paid search is on.";
       }
-      else {
+      else if (S.seat !== "platform") {
         S.conversion.forEach((c, i) => {
           if (hit({ x: 990, y: CONV_START_Y + i * CHECK_H, w: 250, h: 28 }, x, y))
             S.hoverHelp = lockConv(c) || c.help;
         });
       }
-      if (!S.partner && hit(BROWSER, x, y))
+      if (!S.partner && !folioMode() && hit(BROWSER, x, y))
         S.hoverHelp = "What: no club website yet. Needs: Partner Promotion — partner recommends a club and places Smart Catalogue on its page.";
     }
   }
@@ -1738,7 +1767,7 @@ const rng = mathRandomRng();
           S.clubs.forEach((cl) => { if (cl.partner) cl.reviews = c.checked; });
         }
       });
-      if (hit(START, lx, ly)) {
+      if (hit(startRect(), lx, ly)) {
         if (folio && S.clubs.some((c) => !c.onboarded)) return;
         bindSim();
         if (S.printPack) K.applyPrintPack(S.sim);
@@ -1757,7 +1786,7 @@ const rng = mathRandomRng();
         S.state = "gameover";
         return;
       }
-      if (hit(PROMOTE, lx, ly) && S.money >= LOSS_PROMOTE_LIMIT && S.cooldown <= 0 && !S.promoteLock) {
+      if (hit(promoteRect(), lx, ly) && S.money >= LOSS_PROMOTE_LIMIT && S.cooldown <= 0 && !S.promoteLock) {
         S.holding = true; S.holdDur = 0;
       }
       handlePlatHits(lx, ly, false);
