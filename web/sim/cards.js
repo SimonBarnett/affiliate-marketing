@@ -134,8 +134,14 @@ export function applyCard(state, card, healthy, rng) {
       note = "Support-your-club week: conversion spike.";
     } else note = "USP is off — members do not know the club earns.";
   } else if (id === "awin_pause") {
-    addMod(state, { id: "awin", monthsLeft: 99, gmvMult: AWIN_GMV_MULT });
-    note = "Merchant paused. Category GMV ×0.7 until remapped.";
+    const merch = (state.merchants || []).find((m) => m.live !== false);
+    if (merch) {
+      merch.live = false;
+      note = merch.name + " paused. Category GMV ×0.7 until remapped.";
+    } else {
+      addMod(state, { id: "awin", monthsLeft: 99, gmvMult: AWIN_GMV_MULT });
+      note = "Merchant paused. Category GMV ×0.7 until remapped.";
+    }
   } else if (id === "partner_ghost") {
     if (state.partner) {
       state.contact = false;

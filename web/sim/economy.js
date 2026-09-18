@@ -41,5 +41,7 @@ export const ADS_ONLY_SPEND = 180;
 export const ADS_ONLY_TRAFFIC = 22;
 export const PORTFOLIO_MIN = 3;
 export const PORTFOLIO_MAX = 5;
+export const FIRST_SALE_BONUS = 12;
+export const COOP_BUDGET_START = 200;
 export const SUPPORT_CONV = 2.0;
 export const BAD_REVIEW_CONV = -1.0;

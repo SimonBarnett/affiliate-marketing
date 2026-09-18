@@ -8,7 +8,8 @@ import {
   DAYS_PER_MONTH, TOTAL_DAYS, MIN_WORTH_IT, ACCEPTABLE_DECLINE,
   EARLY_CONTRACT_LOSS, CLUB_SHARE, CAPTURE_USP, CAPTURE_AUDIENCE, CAPTURE_COLD,
   PAID_SEARCH_TRAFFIC, TRUST_START, TRUST_HAIRCUT, TRUST_CONV_MULT, PRINT_COST,
-  PARTNER_SHARE, PORTFOLIO_MIN, PORTFOLIO_MAX,
+  PARTNER_SHARE, PORTFOLIO_MIN, PORTFOLIO_MAX, PLATFORM_SHARE,
+  AWIN_GMV_MULT, FIRST_SALE_BONUS, COOP_BUDGET_START, COOP_COST,
 } from "./economy.js";
 import { pick, rnd } from "./rng.js";
 import { closeMonth, emptyMonthMark, noteIntensity } from "./ledger.js";
@@ -57,7 +58,22 @@ export function createState(opts) {
     seat: opts.seat || "partner",
     printDigital: opts.printDigital || "digital",
     clubs: opts.clubs || null,
+    merchants: opts.merchants || defaultMerchants(),
+    coopBudget: opts.coopBudget == null ? COOP_BUDGET_START : opts.coopBudget,
+    coopSpent: 0,
+    defaultUsp: opts.defaultUsp !== false,
+    firstSaleBonusUsed: false,
+    recruitedPartners: opts.recruitedPartners || 0,
+    totalRevenueAudience: 0,
   };
+}
+
+export function defaultMerchants() {
+  return [
+    { id: "kit", name: "Club Kit Co", category: "kit", live: true },
+    { id: "travel", name: "Away Days Travel", category: "travel", live: true },
+    { id: "food", name: "Matchday Food", category: "food", live: true },
+  ];
 }
 
 export function dayToDate(d) {
@@ -163,18 +179,100 @@ export function tryAutoSale(state, rng) {
   if (rng.next() >= p) return null;
   const prod = pick(state.products, rng);
   const rate = prod.commission_rate;
-  let gmvMult = 1;
-  for (const m of modsOf(state)) {
-    if (m.gmvMult) gmvMult *= m.gmvMult;
-  }
-  const price = prod.price * gmvMult;
+  const price = saleGmv(state, prod);
   const commission = price * rate * getCommissionCapture(state);
   state.totalRevenue += price;
   state.totalCommission += commission;
-  const clubEarn = commission * CLUB_SHARE;
-  state.money += clubEarn;
+  if (state.hasAudience) state.totalRevenueAudience = (state.totalRevenueAudience || 0) + price;
+  let clubEarn = commission * CLUB_SHARE;
+  if (state.contact && !state.firstSaleBonusUsed) {
+    clubEarn += FIRST_SALE_BONUS;
+    state.money += FIRST_SALE_BONUS;
+    state.firstSaleBonusUsed = true;
+  }
+  state.money += commission * CLUB_SHARE;
   state.salesCount += 1;
   return { name: prod.name, price: prod.price, rate, commission, clubEarn, product: prod };
+}
+
+export function merchantMult(state, category) {
+  let mlt = 1;
+  const merchants = state.merchants || [];
+  const merch = merchants.find((m) => m.category === category || m.id === category);
+  if (merch && merch.live === false) mlt *= AWIN_GMV_MULT;
+  for (const mod of modsOf(state)) {
+    if (mod.gmvMult && !mod.category) mlt *= mod.gmvMult;
+    if (mod.gmvMult && mod.category && mod.category === category) mlt *= mod.gmvMult;
+  }
+  return mlt;
+}
+
+export function saleGmv(state, prod) {
+  return (prod.price || 0) * merchantMult(state, prod.category);
+}
+
+export function pauseMerchant(state, id) {
+  const merch = (state.merchants || []).find((m) => m.id === id || m.category === id);
+  if (merch) merch.live = false;
+  return merch;
+}
+
+export function remapMerchant(state, id) {
+  const merch = (state.merchants || []).find((m) => m.id === id || m.category === id);
+  if (merch) merch.live = true;
+  if (state.modifiers) {
+    state.modifiers = state.modifiers.filter((m) => !(m.id === "awin" && (!m.category || m.category === id || m.category === (merch && merch.category))));
+  }
+  return merch;
+}
+
+export function qualityScore(state) {
+  const clubs = (state.clubs && state.clubs.length) ? state.clubs.filter((c) => !c.churned) : [state];
+  const n = Math.max(1, clubs.length);
+  const audienceClubs = clubs.filter((c) => c.hasAudience).length;
+  const uspRate = clubs.filter((c) => c.usp).length / n;
+  const promote = Math.max(0, Math.min(1, (state.intensity || 0) / 100));
+  return promote * audienceClubs * uspRate;
+}
+
+export function platformTake(state) {
+  return (state.totalCommission || 0) * PLATFORM_SHARE - (state.coopSpent || 0);
+}
+
+export function audienceGmvShare(state) {
+  const gmv = state.totalRevenue || 0;
+  if (gmv <= 0) return 0;
+  return (state.totalRevenueAudience || 0) / gmv;
+}
+
+export function platformWon(state) {
+  return platformTake(state) > 0 && audienceGmvShare(state) >= 0.5;
+}
+
+export function recruitPartner(state) {
+  if (!state.clubs) state.clubs = [];
+  if (state.clubs.length >= PORTFOLIO_MAX) return null;
+  const n = (state.recruitedPartners || 0) + 1;
+  const club = createClub({ id: "r" + n, name: "Recruited " + n, share: 1 });
+  onboardClub(club, "catalogue");
+  club.hasAudience = true;
+  club.usp = !!state.defaultUsp;
+  club.contact = true;
+  club.content = true;
+  state.clubs.push(club);
+  state.recruitedPartners = n;
+  return club;
+}
+
+export function spendCoop(state) {
+  if ((state.coopBudget || 0) < COOP_COST) return false;
+  state.coopBudget -= COOP_COST;
+  state.coopSpent = (state.coopSpent || 0) + COOP_COST;
+  state.totalCosts += COOP_COST;
+  if ((state.intensity || 0) > 0) {
+    state.modifiers = (state.modifiers || []).concat([{ id: "coop", monthsLeft: 1, promoteCpcMult: 0.7 }]);
+  }
+  return true;
 }
 
 function chargePaidSearch(state) {
@@ -381,7 +479,8 @@ function rollupPortfolio(state) {
   state.totalCosts = clubs.reduce((a, c) => a + (c.totalCosts || 0), 0);
   state.salesCount = clubs.reduce((a, c) => a + (c.salesCount || 0), 0);
   state.untrackedSpend = clubs.reduce((a, c) => a + (c.untrackedSpend || 0), 0);
-  state.money = partnerProfit(state);
+  state.totalRevenueAudience = clubs.reduce((a, c) => a + (c.totalRevenueAudience || 0), 0);
+  state.money = state.seat === "platform" ? platformTake(state) : partnerProfit(state);
 }
 
 function stepPortfolioDay(state, rng) {
@@ -391,8 +490,10 @@ function stepPortfolioDay(state, rng) {
   let lastSale = null;
   for (const club of active) {
     club.products = state.products;
+    club.merchants = state.merchants;
     club.seo = state.seo;
     club.paidSearch = state.paidSearch;
+    if (state.defaultUsp && club.partner && club.usp == null) club.usp = true;
     club.intensity = (state.intensity || 0) * ((club.share || 0) / shareSum);
     club.day = state.day - 1;
     club.ended = false;

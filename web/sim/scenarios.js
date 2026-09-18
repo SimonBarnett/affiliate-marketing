@@ -19,4 +19,5 @@ export const SCENARIOS = {
     paidSearch: false, usp: true, reviews: true, intensity: 40, printDigital: "digital",
   },
   "portfolio": { _portfolio: true },
+  "merchant-storm": { _platform: true, _storm: true },
 };

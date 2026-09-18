@@ -122,6 +122,9 @@ const rng = mathRandomRng();
     printPack: false,
     clubs: null,
     pfHits: [],
+    platHits: [],
+    defaultUsp: true,
+    merchants: null,
   };
 
   // Preload welcome hero art (same folder as the JS / index.html)
@@ -162,10 +165,16 @@ const rng = mathRandomRng();
       printDigital: S.printPack ? "print" : "digital",
       trust: S.sim ? S.sim.trust : TRUST_START,
       clubs: S.clubs,
+      defaultUsp: S.defaultUsp !== false,
+      merchants: S.merchants,
     };
   }
   function bindSim() {
     S.sim = K.createState(simSettings());
+    if (S._storm && S.sim.merchants) {
+      K.pauseMerchant(S.sim, "kit");
+      K.pauseMerchant(S.sim, "travel");
+    }
     pullSim();
   }
   function pullSim() {
@@ -174,6 +183,7 @@ const rng = mathRandomRng();
     S.day = s.day;
     S.money = s.money;
     if (s.clubs) S.clubs = s.clubs;
+    if (s.merchants) S.merchants = s.merchants;
     S.totalRevenue = s.totalRevenue;
     S.totalCommission = s.totalCommission;
     S.totalAdspend = s.totalAdspend;
@@ -257,11 +267,13 @@ const rng = mathRandomRng();
 
   function randomiseProducts() {
     const names = NAME_POOL.slice().sort(() => Math.random() - 0.5).slice(0, 6);
-    S.products = names.map((name) => ({
+    const cats = ["kit", "travel", "food"];
+    S.products = names.map((name, i) => ({
       name,
       price: pick(PRICE_POOL),
       color: pick(COLOR_POOL),
       commission_rate: (10 + Math.floor(Math.random() * 21)) / 100,
+      category: cats[i % cats.length],
     }));
   }
 
@@ -322,20 +334,23 @@ const rng = mathRandomRng();
       else if (c.label === "Product reviews") c.checked = !!sc.reviews;
     });
     if (S.printPack && !S.partner) S.hasAudience = false;
-    if (sc._portfolio) {
-      S.seat = "partner";
+    if (sc._portfolio || sc._platform) {
+      S.seat = sc._platform ? "platform" : "partner";
       S.clubs = K.defaultClubs(3);
       K.onboardClub(S.clubs[0], "catalogue");
       S.clubs[0].hasAudience = true; S.clubs[0].usp = true; S.clubs[0].contact = true; S.clubs[0].content = true;
       K.onboardClub(S.clubs[1], "catalogue");
       S.clubs[1].hasAudience = true; S.clubs[1].usp = true; S.clubs[1].contact = true;
       K.onboardClub(S.clubs[2], "print");
+      if (sc._storm && S.sim) { /* merchants after bind */ }
+      S._storm = !!sc._storm;
     }
   }
 
   function ensurePortfolio() {
-    if (S.seat !== "partner") return;
+    if (S.seat !== "partner" && S.seat !== "platform") return;
     if (!S.clubs || S.clubs.length < 3) S.clubs = K.defaultClubs(3);
+    if (!S.merchants) S.merchants = K.defaultMerchants();
   }
 
   function seatRects() {
@@ -346,7 +361,7 @@ const rng = mathRandomRng();
     return [
       { id: "partner", label: "PARTNER", sub: "Agency year", x: x0, y, w, h },
       { id: "club", label: "CLUB", sub: "Accept · USP · print trap", x: x0 + w + gap, y, w, h },
-      { id: "platform", label: "PLATFORM", sub: "WP5 — not this build", x: x0 + 2 * (w + gap), y, w, h, disabled: true },
+      { id: "platform", label: "PLATFORM", sub: "Merchants · co-op · USP", x: x0 + 2 * (w + gap), y, w, h },
     ];
   }
 
@@ -1045,6 +1060,11 @@ const rng = mathRandomRng();
       text(ctx, win ? "PARTNER WIN — profit and ≥2 live USP clubs" : ("Partner target: profit + 2 USP clubs (live " + n + ")"),
         box.x + box.w / 2, box.y + 54, win ? C.GREEN : C.GRAY, 12, true, "center");
     }
+    if (S.seat === "platform" && S.sim) {
+      const win = K.platformWon(S.sim);
+      text(ctx, win ? "PLATFORM WIN — take > 0 and ≥50% GMV from audience clubs" : "Platform target: take and audience GMV share ≥ 50%",
+        box.x + box.w / 2, box.y + 54, win ? C.GREEN : C.GRAY, 12, true, "center");
+    }
 
     const sales = S.salesCount, rev = S.totalRevenue, comm = S.totalCommission;
     const fee = Math.max(0, S.totalCosts - S.totalAdspend);
@@ -1268,6 +1288,40 @@ const rng = mathRandomRng();
     }
   }
 
+  function drawPlatform(ctx, canEdit) {
+    S.platHits = [];
+    const x = CONV_COL.x + 8, w = CONV_COL.w - 16;
+    let y = STRATEGY_START_Y - 20;
+    text(ctx, "MERCHANTS", x + w / 2, y - 18, C.ORANGE, 13, true, "center");
+    const merchants = (S.sim && S.sim.merchants) || S.merchants || K.defaultMerchants();
+    merchants.forEach((m, i) => {
+      const h = 36;
+      fillRound(ctx, [24, 26, 38], x, y, w, h, 6);
+      text(ctx, m.name, x + 8, y + 8, C.WHITE, 12, true);
+      text(ctx, m.live === false ? "PAUSED ×0.7" : "LIVE", x + w - 8, y + 8, m.live === false ? C.RED : C.GREEN, 11, true, "right");
+      const btn = { x: x + 8, y: y + 8, w: w - 16, h: h - 8 };
+      S.platHits.push({ rect: { x, y, w, h }, act: m.live === false ? "remap" : "pause", id: m.id });
+      y += h + 4;
+    });
+    y += 6;
+    const uspR = { x, y, w, h: 26 };
+    drawCheckbox(ctx, x, y, S.defaultUsp !== false, "Default USP in widget", canEdit);
+    S.platHits.push({ rect: uspR, act: "usp" });
+    y += 32;
+    const coop = { x, y, w: w, h: 28 };
+    const bud = S.sim ? S.sim.coopBudget : 200;
+    fillRound(ctx, C.BLUE, coop.x, coop.y, coop.w, coop.h, 6);
+    text(ctx, "Co-op $" + Math.round(bud), coop.x + coop.w / 2, coop.y + 6, C.WHITE, 13, true, "center");
+    S.platHits.push({ rect: coop, act: "coop" });
+    y += 36;
+    const rec = { x, y, w, h: 28 };
+    fillRound(ctx, C.GREEN, rec.x, rec.y, rec.w, rec.h, 6);
+    text(ctx, "Recruit partner", rec.x + rec.w / 2, rec.y + 6, C.BLACK, 13, true, "center");
+    S.platHits.push({ rect: rec, act: "recruit" });
+    const q = S.sim ? K.qualityScore(S.sim) : 0;
+    text(ctx, "Quality " + q.toFixed(2) + "  (promote × audience clubs × USP rate)", x + w / 2, y + 40, C.GRAY, 11, false, "center");
+  }
+
   function drawMain(ctx) {
     ctx.fillStyle = rgb(C.BG); ctx.fillRect(0, 0, W, H);
     const tint = monitorTint();
@@ -1286,7 +1340,7 @@ const rng = mathRandomRng();
 
     const canEdit = S.state === "setup";
     const club = S.seat === "club";
-    const folio = S.seat === "partner" && S.clubs && S.clubs.length;
+    const folio = (S.seat === "partner" || S.seat === "platform") && S.clubs && S.clubs.length;
     if (!folio) {
       drawCheckbox(ctx, 710, PARTNER_Y, S.partner, club ? "Accept partner" : "Partner Promotion", canEdit);
       drawCheckbox(ctx, 710, AUDIENCE_Y, S.hasAudience, "Has an Audience", canEdit && S.partner);
@@ -1298,7 +1352,8 @@ const rng = mathRandomRng();
       }
     } else {
       drawPortfolio(ctx, canEdit);
-      if (!club) drawCheckbox(ctx, 990, CONV_START_Y + 3 * CHECK_H, S.seo, "SEO (all clubs)", canEdit);
+      if (S.seat === "platform") drawPlatform(ctx, canEdit);
+      else if (!club) drawCheckbox(ctx, 990, CONV_START_Y + 3 * CHECK_H, S.seo, "SEO (all clubs)", canEdit);
     }
 
     S.conversion.forEach((c, i) => {
@@ -1577,7 +1632,7 @@ const rng = mathRandomRng();
         if (hit(r, lx, ly)) {
           S.seat = r.id;
           resetStrategies(); resetGame(false);
-          if (S.seat === "partner") ensurePortfolio();
+          if (S.seat === "partner" || S.seat === "platform") ensurePortfolio();
           S.state = "setup"; S.welcomeT = 0;
           return;
         }
@@ -1633,7 +1688,7 @@ const rng = mathRandomRng();
     }
 
     if (S.state === "setup") {
-      const folio = S.seat === "partner" && S.clubs && S.clubs.length;
+      const folio = (S.seat === "partner" || S.seat === "platform") && S.clubs && S.clubs.length;
       if (folio) {
         for (const h of S.pfHits || []) {
           if (!hit(h.rect, lx, ly)) continue;
@@ -1650,7 +1705,8 @@ const rng = mathRandomRng();
             S.clubs.push(K.createClub({ id: "c" + Date.now(), name: "New Club " + (S.clubs.length + 1), share: 1 }));
           }
         }
-        if (hit({ x: 990, y: CONV_START_Y + 3 * CHECK_H, w: 250, h: 28 }, lx, ly)) S.seo = !S.seo;
+        if (S.seat !== "platform" && hit({ x: 990, y: CONV_START_Y + 3 * CHECK_H, w: 250, h: 28 }, lx, ly)) S.seo = !S.seo;
+        handlePlatHits(lx, ly, true);
       } else {
         if (hit({ x: 710, y: PARTNER_Y, w: 250, h: 28 }, lx, ly)) {
           S.partner = !S.partner;
@@ -1672,6 +1728,7 @@ const rng = mathRandomRng();
         if (hit({ x: 710, y: CONTACT_Y, w: 250, h: 28 }, lx, ly) && S.partner && S.hasAudience) S.contact = !S.contact;
       }
       S.conversion.forEach((c, i) => {
+        if (S.seat === "platform") return;
         if (folio && c.mult) return;
         if (!hit({ x: 990, y: CONV_START_Y + i * CHECK_H, w: 250, h: 28 }, lx, ly)) return;
         if (c.label === "Product reviews" && !S.partner && !folio) return;
@@ -1702,6 +1759,44 @@ const rng = mathRandomRng();
       }
       if (hit(PROMOTE, lx, ly) && S.money >= LOSS_PROMOTE_LIMIT && S.cooldown <= 0 && !S.promoteLock) {
         S.holding = true; S.holdDur = 0;
+      }
+      handlePlatHits(lx, ly, false);
+    }
+  }
+
+  function handlePlatHits(lx, ly, canEdit) {
+    if (S.seat !== "platform") return;
+    if (!S.sim && S.state === "running") return;
+    for (const h of S.platHits || []) {
+      if (!hit(h.rect, lx, ly)) continue;
+      if (h.act === "usp" && canEdit) {
+        S.defaultUsp = !S.defaultUsp;
+        if (S.sim) S.sim.defaultUsp = S.defaultUsp;
+      }
+      if (h.act === "pause") {
+        const bag = S.sim || { merchants: S.merchants || (S.merchants = K.defaultMerchants()) };
+        K.pauseMerchant(bag, h.id);
+        S.merchants = bag.merchants;
+      }
+      if (h.act === "remap") {
+        const bag = S.sim || { merchants: S.merchants || (S.merchants = K.defaultMerchants()) };
+        K.remapMerchant(bag, h.id);
+        S.merchants = bag.merchants;
+      }
+      if (h.act === "coop") {
+        if (!S.sim) bindSim();
+        S.sim.intensity = S.intensity;
+        K.spendCoop(S.sim);
+        pullSim();
+      }
+      if (h.act === "recruit") {
+        if (!S.sim && canEdit) {
+          if (!S.clubs) ensurePortfolio();
+          K.recruitPartner({ clubs: S.clubs, defaultUsp: S.defaultUsp, recruitedPartners: (S.clubs || []).filter((c) => String(c.id).startsWith("r")).length });
+        } else if (S.sim) {
+          K.recruitPartner(S.sim);
+          S.clubs = S.sim.clubs;
+        }
       }
     }
   }
@@ -1814,9 +1909,9 @@ const rng = mathRandomRng();
       const q = new URLSearchParams(window.location.search || "");
       const seat = q.get("seat");
       const scenario = q.get("scenario");
-      if (seat === "club" || seat === "partner") S.seat = seat;
+      if (seat === "club" || seat === "partner" || seat === "platform") S.seat = seat;
       if (scenario) applyScenario(scenario);
-      if (S.seat === "partner") ensurePortfolio();
+      if (S.seat === "partner" || S.seat === "platform") ensurePortfolio();
       if (seat || scenario) { S.state = "setup"; S.welcomeT = 0; }
     } catch (e) {}
 
