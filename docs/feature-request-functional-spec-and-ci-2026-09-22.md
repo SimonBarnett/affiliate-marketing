@@ -1,5 +1,6 @@
 # Feature request: functional spec + CI (2026-09-22)
 
+**Issue:** https://github.com/SimonBarnett/affiliate-marketing/issues/1  
 **Repo:** https://github.com/SimonBarnett/affiliate-marketing  
 **Review:** flamingo-17568 after Simon `#bobiverse` 2026-09-22 (`review this for a FR`).
 
